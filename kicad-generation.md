@@ -28,6 +28,19 @@ must get right, each one learned by getting it wrong once.
   draws a warning; a local label on two sheets silently makes two nets.
 - Everything that connects must sit on the **1.27 mm grid**. A part placed at
   (40, 60) mm is off grid and ERC reports every pin.
+- **Connectivity is by endpoints.** A wire end, pin end, label point or
+  power-symbol pin that lands anywhere on another wire joins it; two wires
+  crossing mid-segment do not. So a route may cross a lane (ugly, legal) but
+  a lane end on a route, or a capacitor's GND pin on a bus, is a short that
+  ERC only reports as "two net names on the same items" — if it reports it
+  at all. Check endpoints geometrically (below).
+- A multi-unit project symbol with `Datasheet "~"` is reported by ERC as
+  "doesn't match copy in library": KiCad folds `~` to the empty string when
+  it loads a library but not when it loads the schematic's embedded copy, and
+  only the multi-unit comparison notices. Write `""`.
+- Several units of one symbol: one `(symbol "Name_1_1" ...)` per unit, pins
+  and graphics inside each; instances with the same Reference and different
+  `(unit n)`; the loader derives the unit count from the names.
 
 ## Pin geometry
 
@@ -52,7 +65,29 @@ rotations, wired to computed points, must land on four distinct nets.
   must be identical.
 - `sch export pdf` renders every sheet; look at it. Overlapping labels and
   wires that merge are invisible in the netlist and obvious on paper.
+  `pdftoppm -r 60` for the whole page, `-r 150` with `-x -y -W -H` for the
+  block you are fixing.
 - `sch export bom --format-preset CSV --group-by Value,Footprint`.
+
+## Three gates a generated schematic must pass
+
+1. `kicad-cli sch erc --severity-all`: zero.
+2. A **geometry check** over each sheet file: every wire end and every pin end
+   that lies on a wire it does not terminate is a contact; the only acceptable
+   ones are a lane overlapping its own stub (same net). The baseboard's
+   `gen/check_geom.py` does this.
+3. A **wire-level connectivity trace** of each sheet: union wires by touching
+   endpoints, attach labels, power symbols and pins, and report any component
+   that carries two rails or a rail plus a differently named label. This finds
+   the merges ERC under-reports, and names the two symbols so the bridge can
+   be found in the generator's wire log. The baseboard's `gen/netcheck.py`.
+
+Log every wire with the call stack that drew it (`<sheet>.wires.json`) while
+developing a layout engine: a contact at (x, y) then names its author.
+
+When re-laying out an existing schematic, diff the netlist before and after
+with passives identified by prefix and value rather than reference, since the
+references renumber; what remains must be intended.
 
 ## What a generator should and should not do
 
@@ -65,7 +100,25 @@ sheet.
 Do not: lay parts out as islands with a label on every pin (see
 [schematic-style.md](schematic-style.md)); embed a commit hash in the output
 (it is always one commit behind); keep generating once the files have been
-hand-edited.
+hand-edited; use a generic symbol (`D_TVS`) for a part the library has
+(`Diode:PESD5V0S1UL` knows its cathode and its SOD-882) — the generic one
+leaves the pinning and package to be verified by hand.
+
+## The fan-out engine, in one paragraph
+
+Per side of the hub: sort the lanes by pin, keep them on pin pitch; analyse
+each chain for hanging elements (reach above/below, how far their text
+spreads back), whether the row is finite (ends in a label, a power symbol,
+an in-line part) or a route (a wire to another part), and where its content
+ends. Spread rows apart only where a hanging element would cross a route, or
+two elements face each other across a gap too small for both (a small one,
+like a power symbol, stacks; two tall ones go side by side). Then slide each
+hanging element past the end of every finite row it reaches across, iterating
+to a fixed point. Place the stack centred on the pin group, or flush with its
+first pin when something fixed (a joined pair of pins, a part on the same
+rows) must stay put. Lanes that moved turn in staggered columns; route
+channels start beyond the widest chain, or at a given x when the default
+would land on a capacitor row.
 
 ## Where symbols come from
 

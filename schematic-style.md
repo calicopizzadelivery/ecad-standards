@@ -9,16 +9,29 @@ that sheet readable, written down so a generator or a person can reproduce it.
 
 Every sheet has a **hub**: the component the sheet is about — the MCU, the
 hub controller, the PHY. It sits near the middle. Its pins **fan out** as
-wires: each wire leaves the pin, turns once, and runs to the thing it
-connects to, with the wires spreading from the pin pitch to whatever spacing
-the attached parts need. Lanes keep the pin order, so they never cross each
-other; the outermost pins turn first.
+wires: each wire leaves the pin and runs straight to the thing it connects
+to. Lanes stay at the pin pitch wherever they can; they keep the pin order,
+so they never cross each other.
+
+A part that hangs off a lane — a pull-up, a capacitor to GND, a power
+symbol — reaches across the neighbouring rows. It does not get its own
+vertical room: it **slides along its lane** until the rows it reaches across
+have ended (a label ends a row; a series part and a power symbol end it a
+little further out), which is why pull-ups on adjacent pins form a staircase
+in the reference. Only when a covered row cannot end, because it is a wire
+to another part, or when two hanging parts face each other across the gap
+between their rows, are the rows spread apart — and then every lane that
+had to move turns in its own column, outermost first, so nothing crosses.
 
 What a wire may end in — the **attachments**, in order of preference:
 
 1. **A pin of another part on the sheet.** Connectors, the ESD array between a
    port and its connector, the level translator between the MCU and a header.
    Drawn as a wire, routed Manhattan, one bend where the rows do not line up.
+   Better still, **place the part so the rows line up** and the wire is
+   straight: an ESD array sits on its connector's D−/D+ rows, a port switch's
+   OUT pin on the connector's VBUS row. Two parts on the same rows go in the
+   same column only if neither's body straddles the other's wires.
 2. **A series part in line** — the 470 Ω on a UART line, the Schottky into
    VREGIN, the inductor after a switch node. The part sits on the wire; the
    wire continues past it.
@@ -50,7 +63,18 @@ with labels.
   under one wire from the rail symbol, each capacitor to its own GND symbol.
   Not scattered, not labelled.
 - **Same-rail power pins share a bus**: VDD pins tied together with one
-  vertical wire and one rail symbol at its end, not six rail symbols.
+  wire along the top of the symbol and one rail symbol at its end, not six
+  rail symbols. The decoupling capacitors hang from that bus, beyond the pins
+  and away from the symbol, so the bus is the IC's supply and its capacitors
+  in one glance. GND pins get the same treatment along the bottom. A pin of
+  another rail between two bus pins (a VREGIN between VDDs) cannot be crossed
+  by the bus: start the bus at the first pin past it.
+- **Strap resistors to one rail share a bus too**: ten LED-strap pull-downs
+  are ten resistors in a column with one vertical wire and one GND symbol,
+  not ten GND symbols stepping down the page.
+- **Two parts on one footprint are two units**: a stacked USB-A receptacle
+  is drawn as two single-port connectors with the same reference, so each
+  port's switch, ESD and receptacle form one cluster.
 - **Crystals and their load capacitors** sit together beside the XTAL pins;
   reset circuits beside the reset pin.
 - **Sub-circuits are clusters.** A port is its switch, its ESD, its connector
@@ -75,6 +99,12 @@ with labels.
 
 - Series resistors drawn in line with the wire they are in series with.
 - Pull-ups vertical, rail symbol directly above, junction dot on the wire.
+  A pull-up on a net that continues elsewhere may instead be drawn flat:
+  pin — net label on the wire — resistor — rail. It reads the same and needs
+  no vertical room, which matters next to a tall neighbour.
+- Sense dividers flat: rail — R — tap (label on the wire) — R — GND.
+- A hanging part's text sits beside the part; an in-line part's reference
+  and value sit above it, inside the row pitch, never on the next row.
 - One junction dot per T; none at corners.
 - Unused pins marked with a no-connect cross at the pin, never left bare.
 - A small note next to any strap or jumper saying what each setting means.
