@@ -15,13 +15,23 @@ so they never cross each other.
 
 A part that hangs off a lane — a pull-up, a capacitor to GND, a power
 symbol — reaches across the neighbouring rows. It does not get its own
-vertical room: it **slides along its lane** until the rows it reaches across
-have ended (a label ends a row; a series part and a power symbol end it a
-little further out), which is why pull-ups on adjacent pins form a staircase
-in the reference. Only when a covered row cannot end, because it is a wire
-to another part, or when two hanging parts face each other across the gap
-between their rows, are the rows spread apart — and then every lane that
-had to move turns in its own column, outermost first, so nothing crosses.
+vertical room: it **slides along its lane** past the neighbours' parts and
+text, which is why pull-ups on adjacent pins form a staircase in the
+reference. It may cross a neighbour's plain wire with its lead (that is a
+hop-over), but never with its body or its rail symbol: a row that would hit
+either must end first. For this to work the hanging part sits with its near
+pin *between* rows (centre 7.62 mm off the lane, pins at 3.81 and 11.43), so
+the lane next door crosses only the lead. Two pull-ups on adjacent lanes
+need the upper lane's label pushed out past the lower pull-up — leave a
+plain stretch of wire for it. Only when a covered row cannot end, because
+it is a wire to another part, or when two hanging parts reach each other's
+rows, are the rows spread apart — and then every lane that had to move
+turns in its own column, outermost first, so nothing crosses; a lane whose
+vertical run passes no other pin needs no column of its own.
+
+A chain hanging from a pin on a part's top or bottom edge runs sideways
+first (a 10 mm lead) and then hangs its parts, so nothing hangs back into
+the body.
 
 What a wire may end in — the **attachments**, in order of preference:
 
@@ -100,7 +110,14 @@ with labels.
 - **Spread the power symbols out.** One GND symbol at the end of a ladder's
   GND rail, one at the end of a strap bus, one at the bottom of a part; not
   a GND symbol under every capacitor, and not two rail names printed on top of
-  each other.
+  each other. A symbol that would hang over the next row's wire (a header's
+  GND pin above a routed pin) gets a hook: up, sideways, then the symbol.
+- **A connector's VBUS lane is a short plain stretch** ending in its label,
+  with the divider or whatever senses it drawn at the MCU pin that reads it;
+  then the ESD array's VBUS pin, or anything else that taps the rail, lands on
+  that stretch with a junction and no second label. A tap must land *before*
+  a series resistor, not after it — the netlist, not the picture, is the
+  check.
 - **Wires go around parts, not through them.** A route to a part's pin
   arrives from the side the pin faces; a route channel runs where nothing is
   placed; a lane that would pass through another part's body means the part
@@ -141,8 +158,10 @@ with labels.
   pin — net label on the wire — resistor — rail. It reads the same and needs
   no vertical room, which matters next to a tall neighbour.
 - Sense dividers flat: rail — R — tap (label on the wire) — R — GND.
-- A hanging part's text sits beside the part; an in-line part's reference
-  and value sit above it, inside the row pitch, never on the next row.
+- A hanging part's text sits beside the part, on the side away from the pin;
+  an in-line part's reference and value sit above it (reference left of
+  centre, value right of it, both at 1.0 mm), inside the row pitch, never on
+  the next row. The next element on the lane starts past that text.
 - One junction dot per T; none at corners.
 - Unused pins marked with a no-connect cross at the pin, never left bare.
 - A small note next to any strap or jumper saying what each setting means.

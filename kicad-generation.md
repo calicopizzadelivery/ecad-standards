@@ -107,7 +107,12 @@ developing a layout engine: a contact at (x, y) then names its author.
 
 When re-laying out an existing schematic, diff the netlist before and after
 with passives identified by prefix and value rather than reference, since the
-references renumber; what remains must be intended.
+references renumber; what remains must be intended. A "closest net" diff
+misleads on two-node nets (a D+ net and a D− net share half their members),
+so also walk the paths that matter pin by pin — connector D+ through the ESD
+array to the controller, each VBUS tap, each I2C bus — and assert each one
+is a single net. A tap that lands one segment too far along a lane connects
+to the wrong side of a resistor and every other check stays green.
 
 ## What a generator should and should not do
 
@@ -126,19 +131,23 @@ leaves the pinning and package to be verified by hand.
 
 ## The fan-out engine, in one paragraph
 
-Per side of the hub: sort the lanes by pin, keep them on pin pitch; analyse
-each chain for hanging elements (reach above/below, how far their text
-spreads back), whether the row is finite (ends in a label, a power symbol,
-an in-line part) or a route (a wire to another part), and where its content
-ends. Spread rows apart only where a hanging element would cross a route, or
-two elements face each other across a gap too small for both (a small one,
-like a power symbol, stacks; two tall ones go side by side). Then slide each
-hanging element past the end of every finite row it reaches across, iterating
-to a fixed point. Place the stack centred on the pin group, or flush with its
-first pin when something fixed (a joined pair of pins, a part on the same
-rows) must stay put. Lanes that moved turn in staggered columns; route
-channels start beyond the widest chain, or at a given x when the default
-would land on a capacitor row.
+Per side of the hub: sort the lanes by pin, keep them on pin pitch and keep
+their pin gaps; analyse each chain for hanging elements (reach above/below,
+how far their text spreads back and on, which distances from the lane are
+its body and symbol), whether the row is finite (ends in a label, a power
+symbol, an in-line part) or a route (a wire to another part), and the
+stretches of the lane that carry a part or text. Spread rows apart only where
+a hanging element would cross a route, or two elements reach each other's
+rows (a small one, like a power symbol, stacks under a tall one; two tall
+ones go side by side, and the cheaper of the two slides). Then slide each
+hanging element past the neighbours' parts and text it reaches across — past
+their wire too where its body or symbol would be hit — iterating to a fixed
+point. Place the stack centred on the pin group, or flush with its first pin
+when something fixed (a joined pair of pins, a part on the same rows) must
+stay put. Lanes that moved turn in staggered columns, one column only where
+the vertical run passes another pin; route channels start beyond the widest
+chain, one per route, or at a given x when the default would land on a
+capacitor row.
 
 ## Where symbols come from
 
