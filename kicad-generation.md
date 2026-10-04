@@ -100,8 +100,13 @@ rotations, wired to computed points, must land on four distinct nets.
    report text over a body it does not belong to, text over a wire, text over
    text, wires through a body, power symbols pointing the wrong way, and
    anything (body, text or wire) past the sheet's frame margin or on its
-   title block. None of these are electrical, all of them are what a reviewer
-   sees first. The baseboard's `gen/check_layout.py`. The frame and title
+   title block, and pin names inside a symbol that print over each other:
+   every symbol on the sheet, library or project, with stacked same-name pins
+   (a USB-C receptacle's four VBUS pins) excepted. None of these are
+   electrical, all of them are what a reviewer sees first. The baseboard's
+   `gen/check_layout.py`, with the pin-name part in `gen/check_pins.py`, whose
+   `--gaps` option lists the closest name pairs for judging marginal
+   clearances. The frame and title
    block positions come from a render of KiCad's default A3 sheet: inner frame
    line 12 mm in, title block from x = 300 mm and y = 253 mm.
 
@@ -123,8 +128,9 @@ Do: pull symbols from KiCad's own libraries so embedded copies match; build
 the missing symbols from datasheet pin tables, and say in the symbol's
 Description where the table came from; when building a box symbol, reserve
 whole rows above the first side pin and below the last for the names of the
-top and bottom pins (1.27 mm text runs about 1.1 mm per character, after the
-1.016 mm name offset), growing the body outward so the side-pin rows stay
+top and bottom pins (1.27 mm text measured with the same glyph widths the
+pin-name check uses, after the 1.016 mm name offset, plus a 0.8 mm gap),
+growing the body outward so the side-pin rows stay
 where the sheet layout expects them; assign footprints for every part;
 write the ERC report and PDF as part of the build; number designators by
 sheet.

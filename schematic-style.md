@@ -95,7 +95,8 @@ with labels.
   longest such name — `VDD33PLL` needs four rows, `GND` two. Side-pin names
   must not meet in the middle either: the body is as wide as the longest
   left name plus the longest right name plus a gap. Extend the body; never
-  shrink or abbreviate the name.
+  shrink or abbreviate the name. The layout gate checks every symbol on the
+  sheet for this, library symbols included.
 - **Two parts on one footprint are two units**: a stacked USB-A receptacle
   is drawn as two single-port connectors with the same reference, so each
   port's switch, ESD and receptacle form one cluster.
