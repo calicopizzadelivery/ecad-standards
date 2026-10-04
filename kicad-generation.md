@@ -98,9 +98,12 @@ rotations, wired to computed points, must land on four distinct nets.
    justification, labels with their frame), every symbol body (the library
    rectangle, or the pin extent for two-pin parts) and every pin stub, then
    report text over a body it does not belong to, text over a wire, text over
-   text, wires through a body, and power symbols pointing the wrong way. None
-   of these are electrical, all of them are what a reviewer sees first. The
-   baseboard's `gen/check_layout.py`.
+   text, wires through a body, power symbols pointing the wrong way, and
+   anything (body, text or wire) past the sheet's frame margin or on its
+   title block. None of these are electrical, all of them are what a reviewer
+   sees first. The baseboard's `gen/check_layout.py`. The frame and title
+   block positions come from a render of KiCad's default A3 sheet: inner frame
+   line 12 mm in, title block from x = 300 mm and y = 253 mm.
 
 Log every wire with the call stack that drew it (`<sheet>.wires.json`) while
 developing a layout engine: a contact at (x, y) then names its author.
@@ -118,7 +121,11 @@ to the wrong side of a resistor and every other check stays green.
 
 Do: pull symbols from KiCad's own libraries so embedded copies match; build
 the missing symbols from datasheet pin tables, and say in the symbol's
-Description where the table came from; assign footprints for every part;
+Description where the table came from; when building a box symbol, reserve
+whole rows above the first side pin and below the last for the names of the
+top and bottom pins (1.27 mm text runs about 1.1 mm per character, after the
+1.016 mm name offset), growing the body outward so the side-pin rows stay
+where the sheet layout expects them; assign footprints for every part;
 write the ERC report and PDF as part of the build; number designators by
 sheet.
 
@@ -147,7 +154,9 @@ when something fixed (a joined pair of pins, a part on the same rows) must
 stay put. Lanes that moved turn in staggered columns, one column only where
 the vertical run passes another pin; route channels start beyond the widest
 chain, one per route, or at a given x when the default would land on a
-capacitor row.
+capacitor row; the turn columns of the lanes that moved start 2.54 mm from
+the pin end, or at a given x when a column would run through a part placed
+under the hub (the hub's bottom-pin ladders).
 
 ## Where symbols come from
 

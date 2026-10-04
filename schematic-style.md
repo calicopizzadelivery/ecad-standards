@@ -89,6 +89,13 @@ with labels.
 - **Strap resistors to one rail share a bus too**: ten LED-strap pull-downs
   are ten resistors in a column with one vertical wire and one GND symbol,
   not ten GND symbols stepping down the page.
+- **Pin names inside a symbol never overlap.** A pin on the top or bottom
+  edge prints its name vertically into the body, so a project symbol keeps
+  whole rows clear above the first side pin (and below the last) for the
+  longest such name — `VDD33PLL` needs four rows, `GND` two. Side-pin names
+  must not meet in the middle either: the body is as wide as the longest
+  left name plus the longest right name plus a gap. Extend the body; never
+  shrink or abbreviate the name.
 - **Two parts on one footprint are two units**: a stacked USB-A receptacle
   is drawn as two single-port connectors with the same reference, so each
   port's switch, ESD and receptacle form one cluster.
@@ -98,7 +105,23 @@ with labels.
   and its LED in one group, repeated per port, aligned so the eye can diff
   them.
 
-## 2a. Direction and flow
+## 2a. The sheet itself
+
+- **Nothing touches the frame.** KiCad's default A3 sheet draws its inner
+  frame line 12 mm in from every edge; every part outline, every piece of
+  text, every wire and label stays at least 3 mm inside that line (so within
+  15 mm to 405 mm across, 15 mm to 282 mm down). A connector "at the edge"
+  means near it, not on it.
+- **The title block is kept clear.** On the default A3 sheet it occupies the
+  lower right, from x = 300 mm and y = 253 mm to the frame. Nothing is placed
+  in or over it, including a regulator's output filter or a note; a block that
+  needs that corner's width goes up a row instead.
+- **Notes sit at the top left**, under the frame line, and any note that must
+  sit low on the page sits above the frame's bottom margin, not on it.
+- The layout gate checks all three: a body, text or wire past the frame or
+  on the title block is a reported defect, like a wire through a part.
+
+## 2b. Direction and flow
 
 - **GND symbols point down. Rail symbols point up. No exceptions.** Power
   flows downward through a sheet: rails at the top of a part or a cluster,
@@ -153,11 +176,19 @@ with labels.
 ## 4. Things the reference does that we keep
 
 - Series resistors drawn in line with the wire they are in series with.
-- Pull-ups vertical, rail symbol directly above, junction dot on the wire.
-  A pull-up on a net that continues elsewhere may instead be drawn flat:
-  pin — net label on the wire — resistor — rail. It reads the same and needs
-  no vertical room, which matters next to a tall neighbour.
-- Sense dividers flat: rail — R — tap (label on the wire) — R — GND.
+- **Power connections flow upward, grounds downward.** A pull-up is a
+  vertical resistor with its rail symbol directly above and a junction dot on
+  the wire; a pull-down, a bias resistor or a capacitor to ground hangs below
+  its wire with the GND symbol under it. A resistor drawn in line with a rail
+  symbol at the end of the wire belongs only to a true series path — an LED
+  and its resistor to the rail, a discharge path — never to a pull-up or
+  pull-down. Where a hanging pull would push a fixed neighbour (a connector's
+  CC pull-downs beside its D± rows), drawing it flat is the tolerated
+  exception, and only there.
+- Sense dividers: the top resistor hangs up to its rail, the bottom one down
+  to GND, both from the tap; the tap's wire carries the label or goes to its
+  pin. On a connector's VBUS lane the divider moves to the MCU pin that reads
+  it, so the lane stays a short plain stretch.
 - A hanging part's text sits beside the part, on the side away from the pin;
   an in-line part's reference and value sit above it (reference left of
   centre, value right of it, both at 1.0 mm), inside the row pitch, never on
