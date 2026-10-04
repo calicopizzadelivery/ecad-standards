@@ -41,6 +41,19 @@ must get right, each one learned by getting it wrong once.
 - Several units of one symbol: one `(symbol "Name_1_1" ...)` per unit, pins
   and graphics inside each; instances with the same Reference and different
   `(unit n)`; the loader derives the unit count from the names.
+- **A field's drawn angle is the symbol's rotation plus the field's own
+  angle.** A resistor placed at 90° with its Reference at angle 0 prints its
+  reference vertically. Write the fields at 90° on a symbol rotated 90° or
+  270°. When the sum comes to 180°, KiCad shows the text upright but mirrors
+  its justification: a field written `(justify right)` reads as
+  left-justified. Swap it when writing.
+- `(mirror y)` after `(at X Y rot)` flips a symbol left-to-right. Pins keep
+  their top/bottom sides, horizontal pin angles swap, library field positions
+  mirror and their left/right justification swaps. Use it instead of a 180°
+  rotation whenever a part has pins on its top or bottom edge.
+- `power:GND` at rotation 0 hangs below its connection point; any rail
+  symbol at rotation 0 stands above it. Rotation 180 turns either one
+  upside down, which is the thing to check for after every generation.
 
 ## Pin geometry
 
@@ -69,7 +82,7 @@ rotations, wired to computed points, must land on four distinct nets.
   block you are fixing.
 - `sch export bom --format-preset CSV --group-by Value,Footprint`.
 
-## Three gates a generated schematic must pass
+## Four gates a generated schematic must pass
 
 1. `kicad-cli sch erc --severity-all`: zero.
 2. A **geometry check** over each sheet file: every wire end and every pin end
@@ -81,6 +94,13 @@ rotations, wired to computed points, must land on four distinct nets.
    that carries two rails or a rail plus a differently named label. This finds
    the merges ERC under-reports, and names the two symbols so the bridge can
    be found in the generator's wire log. The baseboard's `gen/netcheck.py`.
+4. A **layout check**: estimate every text box (fields with their size and
+   justification, labels with their frame), every symbol body (the library
+   rectangle, or the pin extent for two-pin parts) and every pin stub, then
+   report text over a body it does not belong to, text over a wire, text over
+   text, wires through a body, and power symbols pointing the wrong way. None
+   of these are electrical, all of them are what a reviewer sees first. The
+   baseboard's `gen/check_layout.py`.
 
 Log every wire with the call stack that drew it (`<sheet>.wires.json`) while
 developing a layout engine: a contact at (x, y) then names its author.

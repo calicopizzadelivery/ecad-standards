@@ -59,16 +59,23 @@ with labels.
 - **Power flows left to right and top to bottom**: inlet, protection,
   regulator, output filter, rail symbol — in that order along one line, as the
   reference draws its LDOs across the top of the sheet.
-- **Decoupling sits beside the IC it decouples**, as a row of capacitors
-  under one wire from the rail symbol, each capacitor to its own GND symbol.
-  Not scattered, not labelled.
+- **Decoupling sits beside the IC it decouples**, as a **ladder**: the
+  capacitors hang from the supply bus into a GND rail below them, and that
+  rail ends in one GND symbol pointing down. Not scattered, not labelled, and
+  never hung upward with the GND symbols pointing at the sky.
 - **Same-rail power pins share a bus**: VDD pins tied together with one
   wire along the top of the symbol and one rail symbol at its end, not six
-  rail symbols. The decoupling capacitors hang from that bus, beyond the pins
-  and away from the symbol, so the bus is the IC's supply and its capacitors
-  in one glance. GND pins get the same treatment along the bottom. A pin of
-  another rail between two bus pins (a VREGIN between VDDs) cannot be crossed
-  by the bus: start the bus at the first pin past it.
+  rail symbols. The ladder hangs from that bus beyond the pins, so the bus is
+  the IC's supply and its capacitors in one glance; the bus sits high enough
+  (12.7 mm above the pins) that the ladder's GND rail clears them. GND pins
+  get the same treatment along the bottom. A pin of another rail between two
+  bus pins (a VREGIN between VDDs) cannot be crossed by the bus: start the
+  bus at the first pin past it.
+- **Supply pins packed at the pin pitch** (VDDA next to VDDIO next to the
+  core regulator output) cannot each carry a rail symbol straight up: the
+  names print over each other and over the neighbour's wire. Jog them: a
+  short stub up, a run sideways, then the symbol, each one further out, so the
+  names fan apart.
 - **Strap resistors to one rail share a bus too**: ten LED-strap pull-downs
   are ten resistors in a column with one vertical wire and one GND symbol,
   not ten GND symbols stepping down the page.
@@ -80,6 +87,37 @@ with labels.
 - **Sub-circuits are clusters.** A port is its switch, its ESD, its connector
   and its LED in one group, repeated per port, aligned so the eye can diff
   them.
+
+## 2a. Direction and flow
+
+- **GND symbols point down. Rail symbols point up. No exceptions.** Power
+  flows downward through a sheet: rails at the top of a part or a cluster,
+  GND at the bottom. A GND on a top-edge pin or a rail on a bottom-edge pin
+  is drawn with a jog (stub, run sideways, symbol the right way up), not by
+  rotating the symbol. A connector that must face the other way is
+  **mirrored, not rotated**, so its VTref stays on top and its GND pins stay
+  on the bottom.
+- **Spread the power symbols out.** One GND symbol at the end of a ladder's
+  GND rail, one at the end of a strap bus, one at the bottom of a part; not
+  a GND symbol under every capacitor, and not two rail names printed on top of
+  each other.
+- **Wires go around parts, not through them.** A route to a part's pin
+  arrives from the side the pin faces; a route channel runs where nothing is
+  placed; a lane that would pass through another part's body means the part
+  is in the wrong place. Crossing another wire is acceptable when nothing
+  else works; crossing a part never is. Where wires do cross, draw the
+  hop-over (KiCad: Schematic Setup → Formatting → Hop-over size, and
+  `kicad-cli sch export pdf --draw-hop-over`).
+- **Reference and value text sits beside its part and overlaps nothing**:
+  not the part's own outline, not a neighbour's, not a wire. For a multi-pin
+  part, use the library's own field positions (they were placed around that
+  outline); for a project box symbol, reference above the top-left corner,
+  value above the top-right corner when the top edge has no pins, otherwise
+  below the body on whichever side the bottom pins leave free. Two-pin
+  parts: text beside a vertical part, above a horizontal one, and on the
+  side away from the pin for a part hanging off a lane. In-line parts on
+  adjacent rows cannot both carry text between them at 2.54 mm pitch; the
+  lower one slides along its lane past the upper one.
 
 ## 3. What goes on the sheet besides parts
 
