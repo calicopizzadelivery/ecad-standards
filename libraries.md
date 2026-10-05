@@ -32,6 +32,17 @@ The KLC checker (`kicad-library-utils`) runs in CI as a report; the four
 findings that are house decisions are listed in the library README, and
 everything else it reports is a defect.
 
+## Pin order inside a symbol
+
+The order of pins along a side is a layout decision, not a datasheet
+fact, and it is made so the sheet draws straight. A USB pair is listed D-
+above D+, the order of the two lines through a USBLC6 array, so an array
+placed on the pair's rows wires with no crossing. The XTAL pair goes at the
+bottom of its column when the clock cluster has to hang below everything
+else on that side (the USB2517). A pin whose lane carries a long chain
+(a VBUS-detect divider) gets clear rows beside it where a connector placed
+on the neighbouring rows has stubs of its own.
+
 ## Using the library from a project
 
 The library is a git submodule at `hardware/kicad/libs`, pinned to a tag.

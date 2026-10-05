@@ -105,8 +105,19 @@ with labels.
 - **Two parts on one footprint are two units**: a stacked USB-A receptacle
   is drawn as two single-port connectors with the same reference, so each
   port's switch, ESD and receptacle form one cluster.
-- **Crystals and their load capacitors** sit together beside the XTAL pins;
-  reset circuits beside the reset pin.
+- **Clock sources flow downward.** A crystal (or oscillator) hangs below
+  its two XTAL lanes: the lanes run out past everything else on that side
+  of the hub to two columns a crystal's pin pitch apart, turn down at right
+  angles, and drop straight through the crystal's pins, which lie across the
+  columns, on into one load capacitor each and into one shared GND rail with
+  one GND symbol under the crystal (its own ground pins join the same rail).
+  The upper lane takes the outer column, so the two never cross; every wire
+  meets the crystal and the capacitors at a right angle; the texts sit on the
+  outer side. The capacitors are never hung off the XTAL lanes next to the
+  hub with the crystal somewhere else: the clock source is one cluster. Put
+  the XTAL pins at the bottom of their column in a project symbol when the
+  sheet is crowded below them, so the cluster hangs under everything else.
+  Reset circuits sit beside the reset pin.
 - **Sub-circuits are clusters.** A port is its switch, its ESD, its connector
   and its LED in one group, repeated per port, aligned so the eye can diff
   them.

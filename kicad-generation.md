@@ -28,9 +28,10 @@ must get right, each one learned by getting it wrong once.
   draws a warning; a local label on two sheets silently makes two nets.
 - Everything that connects must sit on the **1.27 mm grid**. A part placed at
   (40, 60) mm is off grid and ERC reports every pin.
-- **Connectivity is by endpoints.** A wire end, pin end, label point or
-  power-symbol pin that lands anywhere on another wire joins it; two wires
-  crossing mid-segment do not. So a route may cross a lane (ugly, legal) but
+- **Connectivity is by endpoints.** A wire end or label point that lands
+  anywhere on another wire joins it; two wires crossing mid-segment do not,
+  and neither does a pin end (a power symbol's, say) that lands on the
+  middle of a wire: ERC reports it unconnected. Split the wire at the pin. So a route may cross a lane (ugly, legal) but
   a lane end on a route, or a capacitor's GND pin on a bus, is a short that
   ERC only reports as "two net names on the same items" — if it reports it
   at all. Check endpoints geometrically (below).
@@ -133,7 +134,10 @@ fixed step rather than one from their text; a power symbol's name is part of
 its width, so the lane end and the hanging pull-up carry half the rail name
 in their spread; a route channel must lie beyond every chain on that side,
 including a staircase of pull-ups, which is why a wide staircase is drawn as
-a bus instead; and a `#` comment appended mid-line to a dictionary literal
+a bus instead; a cluster that hangs below a side's lanes (the crystal and
+its capacitors) is placed beyond that side's route channels, which the fan
+records as the first free column, so its drops cross nothing; and a `#`
+comment appended mid-line to a dictionary literal
 comments out the rest of the entries on that line and the fan silently
 drops those pins (the ERC catches it as unconnected pins).
 
