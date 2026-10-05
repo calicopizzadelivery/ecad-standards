@@ -100,18 +100,38 @@ rotations, wired to computed points, must land on four distinct nets.
    report text over a body it does not belong to, text over a wire, text over
    text, wires through a body, power symbols pointing the wrong way, and
    anything (body, text or wire) past the sheet's frame margin or on its
-   title block, and pin names inside a symbol that print over each other:
+   title block, pin numbers (text along the pin, outside the body) against
+   everything else, and pin names inside a symbol that print over each other:
    every symbol on the sheet, library or project, with stacked same-name pins
    (a USB-C receptacle's four VBUS pins) excepted. None of these are
    electrical, all of them are what a reviewer sees first. The baseboard's
    `gen/check_layout.py`, with the pin-name part in `gen/check_pins.py`, whose
    `--gaps` option lists the closest name pairs for judging marginal
-   clearances. The frame and title
+   clearances. Text widths must be real: a per-character estimate 20 % narrow
+   lets "U406" and "TPS2553DBV" overlap unreported. KiCad writes every string
+   into its PDF export as invisible text whose extent along the text matches
+   the stroke glyphs (its height does not), so `pdftotext -bbox-layout` on
+   the exported PDF gives a few thousand measured widths to fit a per-glyph
+   advance table against; the baseboard's table is in `gen/check_pins.py`,
+   median error zero, and the same table drives the generator's spacing. The
+   frame and title
    block positions come from a render of KiCad's default A3 sheet: inner frame
    line 12 mm in, title block from x = 300 mm and y = 253 mm.
 
 Log every wire with the call stack that drew it (`<sheet>.wires.json`) while
 developing a layout engine: a contact at (x, y) then names its author.
+
+Lessons from the engine, each paid for once: the offset that places a lane
+stack must itself be on the grid, or rows spread to 3.81 mm collapse back to
+2.54 mm when they are snapped and the parts on them collide; lanes that end
+on a shared bus must have identical content widths, so labels on them take a
+fixed step rather than one from their text; a power symbol's name is part of
+its width, so the lane end and the hanging pull-up carry half the rail name
+in their spread; a route channel must lie beyond every chain on that side,
+including a staircase of pull-ups, which is why a wide staircase is drawn as
+a bus instead; and a `#` comment appended mid-line to a dictionary literal
+comments out the rest of the entries on that line and the fan silently
+drops those pins (the ERC catches it as unconnected pins).
 
 When re-laying out an existing schematic, diff the netlist before and after
 with passives identified by prefix and value rather than reference, since the

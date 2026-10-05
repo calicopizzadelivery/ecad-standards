@@ -88,7 +88,12 @@ with labels.
   names fan apart.
 - **Strap resistors to one rail share a bus too**: ten LED-strap pull-downs
   are ten resistors in a column with one vertical wire and one GND symbol,
-  not ten GND symbols stepping down the page.
+  not ten GND symbols stepping down the page. The same goes for five or more
+  pull-ups to one rail on adjacent pins (a row of /FAULT inputs with their
+  I2C neighbours): hung one per lane they stagger past each other's text and
+  walk off the sheet; drawn as a column to one rail symbol they take one
+  width. A bus needs every lane's content to end at the same x, so the
+  labels on those lanes are given one fixed step.
 - **Pin names inside a symbol never overlap.** A pin on the top or bottom
   edge prints its name vertically into the body, so a project symbol keeps
   whole rows clear above the first side pin (and below the last) for the
@@ -150,15 +155,25 @@ with labels.
   hop-over (KiCad: Schematic Setup → Formatting → Hop-over size, and
   `kicad-cli sch export pdf --draw-hop-over`).
 - **Reference and value text sits beside its part and overlaps nothing**:
-  not the part's own outline, not a neighbour's, not a wire. For a multi-pin
-  part, use the library's own field positions (they were placed around that
-  outline); for a project box symbol, reference above the top-left corner,
-  value above the top-right corner when the top edge has no pins, otherwise
-  below the body on whichever side the bottom pins leave free. Two-pin
-  parts: text beside a vertical part, above a horizontal one, and on the
-  side away from the pin for a part hanging off a lane. In-line parts on
-  adjacent rows cannot both carry text between them at 2.54 mm pitch; the
-  lower one slides along its lane past the upper one.
+  not the part's own outline, not a neighbour's, not a wire, and not each
+  other. For a multi-pin part, use the library's own field positions (they
+  were placed around that outline); for a project box symbol, reference
+  above the top-left corner, value above the top-right corner when the top
+  edge has no pins and the body is wide enough for both, otherwise the two
+  stacked above the top-left corner (a 15 mm body cannot carry "U406" and
+  "TPS2553DBV" on one line), or below the body on whichever side the bottom
+  pins leave free. A part turned on its side carries both texts on the side
+  that has no pins. Two-pin parts: text beside a vertical part, above a
+  horizontal one, and on the side away from the pin for a part hanging off a
+  lane. In-line parts on adjacent rows cannot both carry text between them
+  at 2.54 mm pitch; the lower one slides along its lane past the upper one.
+  A rail symbol's name is as wide as the name: two pull-ups whose rails
+  stand 7.62 mm apart print "+3V3_PD" over "VBUS_IN"; space them by the
+  names, not by the symbols.
+- **Pin numbers are text too.** They sit along the pin outside the body and
+  are checked like any other text: a route that lands on a pin from the
+  side the pin does not face runs over its number, and a connector placed
+  so that its pin stubs fall on a route column has its numbers crossed.
 
 ## 3. What goes on the sheet besides parts
 
@@ -198,7 +213,21 @@ with labels.
 - Unused pins marked with a no-connect cross at the pin, never left bare.
 - A small note next to any strap or jumper saying what each setting means.
 
-## 5. Things we do not do
+## 5. Component values come from the reference design
+
+Every IC's surrounding parts start from the implementation its maker has
+proven: the datasheet's typical application or design example, and the
+evaluation board where its schematic is published. Copy the values, then
+record, per IC, the source, what it specifies, what the board does and why
+any difference exists (`docs/reference-design-review.md` on the baseboard).
+A value that was reasoned out rather than taken from the reference is a
+placeholder until it is checked against one. This is cheaper than the churn
+of finding out at bring-up: the first pass of the baseboard had a buck
+compensation guessed, a PHY management pull-up five times too weak, a
+hub's VBUS detect divider above its supply, and a UART bridge without its
+USB series resistors, all caught by this comparison.
+
+## 6. Things we do not do
 
 - A label on every pin with the parts floating elsewhere. That is a netlist
   printed as a picture, and nobody can review it.
