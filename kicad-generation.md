@@ -51,6 +51,10 @@ must get right, each one learned by getting it wrong once.
   their top/bottom sides, horizontal pin angles swap, library field positions
   mirror and their left/right justification swaps. Use it instead of a 180°
   rotation whenever a part has pins on its top or bottom edge.
+- A local label's text is drawn above its wire, 0.4 to 1.9 mm above the
+  anchor, whichever way it reads; a global label's flag is centred on the
+  anchor. A layout check that models both as centred misses a local label on
+  one row printing over a global label on the row above.
 - `power:GND` at rotation 0 hangs below its connection point; any rail
   symbol at rotation 0 stands above it. Rotation 180 turns either one
   upside down, which is the thing to check for after every generation.
