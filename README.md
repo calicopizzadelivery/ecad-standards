@@ -11,6 +11,7 @@ and meant to be the standard every project after it follows.
 | [schematic-style.md](schematic-style.md) | How a sheet is composed so a human can read it: the hub-and-fan-out model, where connectors go, when a net label is allowed |
 | [kicad-project.md](kicad-project.md) | Repository layout, sheet split, reference designator ranges, what gets committed, the verify-before-fab list |
 | [kicad-generation.md](kicad-generation.md) | What we learned about the KiCad 10 file format and `kicad-cli` while generating schematics programmatically — the facts a generator must obey |
+| [libraries.md](libraries.md) | Where symbols and footprints live (the ecad-libraries repository, used as a submodule), how they are built and checked, and when a part gets a house symbol instead of a KiCad one |
 
 The short version of the style: **a sheet is organised around its main
 component.** Nets leave that component as wires, fanning out in order, and

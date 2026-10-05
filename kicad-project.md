@@ -7,8 +7,10 @@
   docs/block-diagram.{py,svg,png}   kept current with every configuration change
   hardware/kicad/README.md     how the KiCad project came to be, and the handoff rule
   hardware/kicad/<board>/      the KiCad project: .kicad_pro, root .kicad_sch, one .kicad_sch
-                               per sub-sheet, project .kicad_sym, sym-lib-table, the ERC
-                               report, the PDF, the BOM
+                               per sub-sheet, sym-lib-table and fp-lib-table pointing at ../libs,
+                               the ERC report, the PDF, the BOM
+  hardware/kicad/libs/         the house libraries (ecad-libraries) as a git submodule, pinned
+                               to a tag; see libraries.md
   hardware/kicad/gen/          the generator, if one produced the first pass
   hardware/datasheets/         the parts that matter
 ```
