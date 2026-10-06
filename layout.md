@@ -1,8 +1,51 @@
 # Layout
 
-What a board needs before anyone places a part, and the order the work goes
-in. The method is the one developed on the SBC development baseboard; each
-step records the tool and the gate that go with it.
+Rules for placing and routing a board, and the order the work goes in. The
+method is the one developed on the SBC development baseboard; each rule
+says what it inherits, what it measures, and the gate that checks it.
+
+## 0. Parent standards
+
+This standard inherits a public, maintained design-rule standard rather
+than restating one. Where the parent and this document differ, this
+document is a tailoring and says so.
+
+- **Parent: ECSS-Q-ST-70-12C Rev.1, *Design rules for printed circuit
+  boards*** (European Cooperation for Space Standardization, published
+  30 April 2025; the Oct 2024 DIR1 draft is the text read for this
+  document, so clause numbers are quoted from it). It is free to download
+  from ecss.nl after registration, is kept current, and covers everything
+  a layout needs numbers for: build-up and materials (6, 7.1–7.3), track
+  width and spacing with their manufacturing tolerances (7.4), pad design
+  (7.5), copper planes (7.6), thermal rules (10), current rating on the
+  IPC-2152 model (13.6), voltage rating and insulation distance (13.8–13.10),
+  controlled impedance (13.11), zone management for digital, analog and
+  mixed boards (13.12–13.14), and design for assembly: distances from copper
+  and components to edges, holes and screws (14.3, Tables 14-1 and 14-2)
+  and SMT land patterns (14.5). We inherit all of it. Being a space
+  standard it is conservative; that is the right default for a bench tool
+  that will be rebuilt rarely.
+- **Referenced through the parent**: IPC-2221B/2222 (generic and rigid
+  board design), IPC-2152 (current carrying capacity, which supersedes the
+  IPC-2221 charts), IPC-7351 (land patterns, which KiCad's library
+  follows). These are paid documents; the parent carries the numbers we use
+  from them.
+- **Fallback**: MIL-STD-275E, *Printed wiring for electronic equipment*
+  (US DoD, 1984, public domain, superseded by IPC-2221). Cited only where
+  the parent is silent.
+- **The fab's capability sheet** (for the baseboard, Advanced Circuits'
+  standard process) sets the manufacturing minimums the DRC enforces. The
+  stricter of the fab and the parent applies.
+
+Tailorings, all recorded in the project's directives:
+
+| Parent clause | Rule there | Here |
+|---|---|---|
+| 7.6 a, b | planes carry a venting grid | solid planes; the grid is for vacuum outgassing |
+| 14.3.2 c | no components within 5 mm of the edge | edge connectors are at the edge by design; other parts keep 3 mm, the assembler consulted |
+| 14.3.1 Table 14-1 A1 | tracks 0.7 mm from the edge | kept; planes and pads 0.25 mm (A6), as the fab allows |
+| 13.6.2 b | tracks ≤ 5 °C rise preferred | 10 °C (13.6.2 a) is the design figure; the classes' widths come from it |
+| 14.3.2 Table 14-2 B1 | 0.6 mm between bodies | KiCad courtyards (0.25 mm each side) plus 0.2 mm packing margin |
 
 ## 1. Entering layout: the project directives
 
@@ -23,7 +66,8 @@ The directives state:
   the edge, its order along the edge, which way it faces (toward the user,
   the target, the PSU, the bench) and how it is driven (cable, plug, ribbon),
   plus the usable length of each edge once the holes have taken their
-  share. Inboard connectors say why they earn no edge.
+  share. Inboard connectors say why they earn no edge. Body widths are
+  measured from the footprints, not estimated.
 - **Keep-outs**: areas no part or copper may enter: the strip inside each
   edge, the standoff pads, isolation gaps with their creepage distance, the
   antenna or magnetics regions, the label area.
@@ -35,6 +79,7 @@ The directives state:
   parts that must sit next to each other (a crystal and its IC, a switch and
   its receptacle), and the nets that may not share a plane (an isolated
   ground).
+- **The ICs' own layout guidelines**, collected as in section 3.2.
 
 The schematic carries the same information where layout meets it: every
 differential pair is named `_P`/`_N` and classed, every high-current net
@@ -59,19 +104,22 @@ the start is reproducible:
 3. Edge connectors are placed on their edges in the stated order, rotated so
    that they mate outward, flush with the edge or on the footprint's own
    "PCB Edge" mark, with a stated gap between bodies and a stated distance
-   from each corner. Measure the footprints before trusting the spec's body
-   widths: an RJ45 is 22 mm, not 16.
+   from each corner. The mating direction of a horizontal connector
+   footprint follows one rule across KiCad's library: **the solder pins sit
+   at the rear, so the mating face is the end of the body farthest from the
+   pad rows**; a pin header mates where its pins point. The 3D view is the
+   check: a jack facing a mounting hole cannot be plugged in.
 4. Parts that straddle an isolation barrier (a relay, an opto-coupler) are
    placed by hand in the directives, and the barrier polygon is drawn
    through them between the two sides' pins.
 5. Every other part joins the group of the IC it shares the most signal nets
-   with, and each group is packed into its rectangle (tallest first, in
+   with, and each group is packed into its rectangles (tallest first, in
    rows). The rectangles are sized from the parts' courtyards; the generator
    reports a group that does not fit instead of spilling it over a neighbour.
 6. Planes are drawn as zones (the ground plane on L2, an isolated ground
    island where there is one), stopping a millimetre short of the edge, and
    a `.kicad_dru` carries the rules the directives need (nothing but the
-   isolated class inside the isolation area; its creepage clearance).
+   isolated classes inside the isolation area; their creepage clearance).
 7. The gate is `kicad-cli pcb drc --severity-all` read by severity: zero
    errors other than unconnected items (the board is unrouted), with the
    silkscreen warnings left for the layout work to clear. An error inside a
@@ -87,15 +135,152 @@ has been edited. The schematic generator stays usable, because its derived
 UUIDs keep the footprints linked (see
 [kicad-generation.md](kicad-generation.md)).
 
-## 3. Placement and routing order
+## 3. Placement
+
+### 3.1 Flow
+
+- **A connector's interface circuit sits at the connector.** The USB-PD
+  sink controller, its VBUS and CC parts and its protection sit at the PD
+  inlet; an ESD array sits at its receptacle, in line with the pair; the
+  magnetics live in the jack or beside it; a port switch sits between its
+  hub pins and its receptacle. Nothing that belongs to a connector is placed
+  inboard for convenience.
+- **Power flows left to right onto the board's rails.** The inlet is at the
+  left edge; the PD controller, the eFuse, the bucks and the rail
+  distribution follow in that order across the board, so the high-current
+  path never doubles back and each stage's input is the previous stage's
+  output. Signals flow the same way the board is read: from the user's
+  edge to the target's edge.
+- **Blocks are zones** (parent 13.12.2): low-speed, high-speed, analog,
+  power and RF are physically separate; high-speed signals do not cross
+  low-speed zones; the parts of one block sit together, the block next to
+  the connector it serves.
+
+### 3.2 The ICs' own guidelines
+
+Most ICs publish a layout section: where their capacitors go, which node
+must be small, what copper the thermal pad needs, what must not pass
+underneath. **Those guidelines are followed on a best-effort basis, and the
+effort is written down.** Before placement, each IC's datasheet layout
+section (and its evaluation board, as in the reference-design review) is
+read and its rules are entered in the project's layout guideline table
+(`docs/layout-guidelines.md`): the rule, its source, and how the board meets
+it or why it does not. A rule not met is a decision, recorded with its
+reason, never an omission. Typical entries: a buck's input capacitor loop
+and SW node, a current limit resistor's trace, an exposed pad's via field,
+a PHY's magnetics placement and the plane under it, a hub's per-pin
+decoupling and RBIAS return, an ESD array on the same layer as the pair.
+
+### 3.3 Decoupling and bypassing
+
+- **A capacitor sits at the pin it buffers.** The smallest value is closest
+  to the pin, the bulk capacitor behind it, the ground return through a via
+  beside the capacitor's ground pad, not through a trace. A capacitor that
+  cannot reach its pin is not that pin's capacitor.
+- One capacitor per supply pin where the datasheet gives one per pin; shared
+  bulk where it says shared.
+- Regulators: the input capacitor, switch, catch diode, inductor and output
+  capacitor form the smallest loop the parts allow, on one layer, with the
+  switching node's copper minimised; the feedback divider next to the FB
+  pin and away from the switching node; the timing and limit resistors at
+  their pins with short returns.
+
+### 3.4 Connectors, holes and edges
+
+- **Every connector faces outward**, its mating face at the edge, verified
+  in the 3D view before anything else is placed. A connector that faces a
+  mounting hole, another connector or the board's interior is wrong even
+  when the DRC is clean.
+- Distances from copper and components to edges, holes, screws and
+  neighbours per the parent's Tables 14-1 and 14-2, with the tailorings in
+  section 0. The corner squares around the mounting holes carry nothing but
+  the holes.
+
+### 3.5 Thermal
+
+- An exposed pad is soldered to a copper area on its layer and tied by a via
+  array to the plane below (parent 10; every TI layout section says the
+  same). The via count is given in the guideline table.
+- Regulators get a top-side copper area sized for the dissipation the
+  datasheet's thermal table gives at the board's worst case.
+
+### 3.6 Isolation
+
+An isolated region has its own copper on every layer it uses and no board
+plane under it; its creepage to board nets follows the parent's insulation
+distances (13.8–13.10) and never less than the directives state; only the
+parts that straddle the barrier by design cross it, with the barrier drawn
+between their two sides' pins. A DRC rule enforces both the keep-out and the
+clearance.
+
+## 4. Copper
+
+- **Planes and power distribution are polygons.** A power net that feeds
+  more than one part is a polygon on its layer, never a wide trace where a
+  pour will do; the ground plane is one unbroken polygon under every
+  high-speed signal (parent 13.12.2 d–f); a power polygon is sized from the
+  parent's current rating (13.6, IPC-2152 model, 10 °C rise) and the net
+  class states the equivalent trace width.
+- **Vias carry current in arrays**: two per layer change for the 3 A
+  classes, more for the 6 A class, placed where the polygon narrows.
+- Planes stop short of the board edge by the fab's copper-to-edge minimum
+  plus a margin, and clear the mounting holes and their standoff pads.
+- No copper under crystals, under the magnetics side of an Ethernet jack, or
+  under an isolation barrier.
+
+## 5. Routing
+
+- **Controlled-impedance pairs** (parent 13.11): on one layer over an
+  unbroken reference plane, no vias except at the pads, end-to-end, the two
+  tracks of a pair matched in length, the geometry from the directives'
+  stackup and the fab's impedance calculator.
+- **Loops small** (parent 13.12.2 g): every signal has its return directly
+  under it; a signal that changes layer gets a ground via beside it.
+- **Crystals**: the shortest possible tracks to the IC, load capacitors
+  between, a ground ring, no signals routed through the area.
+- **High-current paths** follow the class width without necking at pads;
+  a sense or limit resistor's trace is short and away from switching nodes.
+- Routing order: section 8.
+
+## 6. Silkscreen
+
+- **Nothing on silkscreen overlaps anything**: not another silk item, not a
+  pad or via or mask opening, not the board edge. KiCad's silk checks
+  (`silk_overlap`, `silk_over_copper`, `silk_edge_clearance`) are part of the
+  final gate and read zero.
+- **Reference designators are sized to fit**: 1.0 mm text with a 0.15 mm
+  stroke by default, 0.8 mm where space is short and never smaller; placed
+  next to the part outside its courtyard, reading in one of two directions
+  across the board.
+- **Where density defeats that, designators are omitted, deliberately.**
+  If a designator at the minimum size cannot sit within 1 mm of its part's
+  courtyard without overlapping, it is omitted. In a cluster where more than
+  a third of the passives would lose theirs, all of the cluster's passives
+  lose theirs and the cluster is outlined and named on silk instead (an IC's
+  decoupling, a port's switch and filter); the fabrication layer keeps every
+  designator for the assembly drawing. ICs, connectors, relays, polarity
+  marks and pin-1 marks are never omitted.
+- Connector names, pin 1, polarity and the markings the directives call for
+  are readable with the connectors fitted.
+
+## 7. Gates
+
+1. `kicad-cli pcb drc --severity-all`: zero errors at every step (the
+   documented footprint-internal exceptions aside); zero unconnected items
+   at the end of routing; zero silk violations at the end of layout.
+2. The 3D view, at placement: every connector faces outward and clears its
+   neighbours; nothing stands in a keep-out.
+3. The layout guideline table (3.2): every row says met, or why not.
+4. The directives: still true of the board; changed where the board changed.
+
+## 8. Placement and routing order
 
 The order the baseboard's layout follows; each step is checked against the
 directives before the next starts.
 
 1. **Mechanical first.** The edge connectors against the mechanical drawing
    or a printed 1:1 outline: edge, order, direction, overhang, the holes'
-   clearance. The terminal blocks' orientation is checked in the 3D view,
-   since a footprint does not say which way its plug enters.
+   clearance, the 3D view.
 2. **Barriers and isolation.** Any isolated region is settled next: the parts
    that straddle it, its ground island, the creepage gap, and the DRC rule
    that enforces it, so nothing routed later can cross it by accident.
@@ -103,17 +288,12 @@ directives before the next starts.
    anything else inboard: receptacle, ESD array and controller in a line,
    the pair on the top layer over the unbroken ground plane, no stubs,
    lengths matched.
-4. **Power.** Switching regulators get their loops (input capacitor, switch,
-   catch diode, inductor, output capacitor) tight and their thermal copper;
-   the high-current classes get their pours and their via pairs; then the
-   rails to each block.
+4. **Power.** Inlet to rails, left to right: the PD stage at its connector,
+   the switching regulators with their loops tight and their thermal copper,
+   the high-current polygons with their via arrays, then the rails to each
+   block as polygons.
 5. **Everything else**, block by block, each block's decoupling against its
    pins before its signals leave it. Crystals last within their block, with
    nothing routed under them.
-6. **Silkscreen and fabrication**: reference designators readable with the
-   connectors fitted, the markings the directives call for (pin 1, polarity,
-   connector names), the stackup and controlled-impedance notes in the fab
-   drawing.
-
-The gate at every step is DRC at every severity: zero errors, and the
-warnings explained. Unconnected items go to zero at step 5.
+6. **Silkscreen and fabrication**: section 6, then the stackup and
+   controlled-impedance notes in the fab drawing.

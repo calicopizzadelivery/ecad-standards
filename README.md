@@ -10,7 +10,7 @@ and meant to be the standard every project after it follows.
 |---|---|
 | [schematic-style.md](schematic-style.md) | How a sheet is composed so a human can read it: the hub-and-fan-out model, where connectors go, when a net label is allowed |
 | [kicad-project.md](kicad-project.md) | Repository layout, sheet split, reference designator ranges, what gets committed, the verify-before-fab list |
-| [layout.md](layout.md) | What a board needs before layout starts (the project directives) and the order the layout work goes in |
+| [layout.md](layout.md) | Layout: the parent standard it inherits (ECSS-Q-ST-70-12C), the project directives a board starts from, placement, copper, routing and silkscreen rules, the gates and the order of work |
 | [kicad-generation.md](kicad-generation.md) | What we learned about the KiCad 10 file format and `kicad-cli` while generating schematics programmatically — the facts a generator must obey |
 | [libraries.md](libraries.md) | Where symbols and footprints live (the ecad-libraries repository, used as a submodule), how they are built and checked, and when a part gets a house symbol instead of a KiCad one |
 
