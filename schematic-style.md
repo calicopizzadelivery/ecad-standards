@@ -117,7 +117,20 @@ with labels.
   hub with the crystal somewhere else: the clock source is one cluster. Put
   the XTAL pins at the bottom of their column in a project symbol when the
   sheet is crowded below them, so the cluster hangs under everything else.
-  Reset circuits sit beside the reset pin.
+- **Reset circuits flow downward.** The pull-up, the capacitor and the
+  button of a reset (or enable) network are one cluster at the end of the
+  reset lane, drawn top to bottom: the rail symbol, the pull-up resistor, the
+  node row where the lane arrives from the hub, the capacitor straight below
+  in the same column, one GND symbol under it. A push button, when there is
+  one, hangs from the lane one column nearer the hub and shares the GND rail;
+  nothing else sits on those columns. The lane carries the net's label
+  between the hub and the cluster. A header that also drives the reset gets
+  the same label on its pin, not a wire into the cluster: the node already
+  takes three wires and a fourth would make a four-way junction. The parts
+  are never strung along the lane with the resistor hung up here and the
+  capacitor hung down there: the time constant is one column. Texts: the
+  button's toward the hub, under the lane; the resistor's and capacitor's
+  away from it.
 - **Sub-circuits are clusters.** A port is its switch, its ESD, its connector
   and its LED in one group, repeated per port, aligned so the eye can diff
   them.

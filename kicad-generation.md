@@ -20,6 +20,20 @@ must get right, each one learned by getting it wrong once.
   "/<root-uuid>[/<sheet-uuid>]" (reference ...) (unit ...))))`. The path is
   the root schematic's uuid followed by the uuid of the `(sheet ...)` element
   in the parent — not the sub-sheet file's own uuid.
+- **UUIDs are derived, not drawn.** Every `uuid` the generator writes is a
+  UUID5 in a namespace made from the project name: a symbol's from its
+  reference and unit, a pin's from its symbol and number, a wire's from its
+  two ends, a label's from its net and position, a sheet's from its file
+  name, the root's from the project; identical derivations get a counter.
+  Then a rebuild changes only the sheets whose design changed, a partial
+  build leaves the other sheets' instance paths valid, and a board's
+  footprints, which link to symbols by UUID path, survive regeneration. The
+  costs are known and accepted: renaming a reference is a new symbol (as in
+  KiCad itself), moving a wire or label is a new UUID (nothing outside the
+  sheet refers to them), power symbols numbered in draw order renumber when
+  one is inserted. Pin the dates in the netlist, PDF and ERC headers to the
+  title-block date too, or they are the last thing that differs between two
+  builds of the same design.
 - Power symbols come from `power.kicad_sym`; **the net name is the Value
   field**, so a `+5V` symbol with Value `+5V_PORTS` makes a net called
   `+5V_PORTS`. GND symbols are the same part with a different value.
@@ -136,7 +150,15 @@ in their spread; a route channel must lie beyond every chain on that side,
 including a staircase of pull-ups, which is why a wide staircase is drawn as
 a bus instead; a cluster that hangs below a side's lanes (the crystal and
 its capacitors) is placed beyond that side's route channels, which the fan
-records as the first free column, so its drops cross nothing; and a `#`
+records as the first free column, so its drops cross nothing; a cluster
+that sits on its own lane and needs the neighbouring rows kept clear (the
+reset network: rail symbol above, capacitor and button below) is an
+attachment that declares its reaches and its text spread, so the spread and
+slide passes treat it like any hanging part, and its label is a tag on the
+lane before it whose step is lengthened when the column would otherwise
+land under a neighbour's hanging parts; a node takes three wires, which is
+why the button hangs one column before the R–C column and a header on the
+same net gets a label instead of a fourth wire; and a `#`
 comment appended mid-line to a dictionary literal
 comments out the rest of the entries on that line and the fan silently
 drops those pins (the ERC catches it as unconnected pins).
@@ -163,7 +185,8 @@ where the sheet layout expects them; assign footprints for every part;
 write the ERC report and PDF as part of the build; number designators by
 sheet.
 
-Do not: lay parts out as islands with a label on every pin (see
+Do not: write random UUIDs (every build then rewrites every sheet, and once
+layout starts every footprint is orphaned); lay parts out as islands with a label on every pin (see
 [schematic-style.md](schematic-style.md)); embed a commit hash in the output
 (it is always one commit behind); keep generating once the files have been
 hand-edited; use a generic symbol (`D_TVS`) for a part the library has
