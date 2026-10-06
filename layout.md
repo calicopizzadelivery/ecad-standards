@@ -44,21 +44,42 @@ carries a net class directive flag whose class name states the current
 
 ## 2. The board is generated, once
 
-The first board file is produced by a generator from the schematic, the
-project file and the directives, so that the directives are honoured
-exactly and the start is reproducible:
+The first board file is produced by a generator (the baseboard's
+`gen/pcb.py`, on KiCad's `pcbnew` Python module) from the schematic, the
+project file and the directives, so the directives are honoured exactly and
+the start is reproducible:
 
-1. The outline, holes and keep-outs come straight from the directives.
-2. Every footprint is loaded from the libraries the schematic names, its
-   pads given the nets from the schematic's netlist export.
-3. Edge connectors are placed on their edges in the stated order and
-   direction; inboard parts are placed in groups by function next to the
-   connector they serve, on a coarse grid, as a starting point and nothing
-   more.
-4. The net classes come from the project file; the stackup is written into
-   the board.
-5. The gate is `kicad-cli pcb drc --severity-all`: zero violations other
-   than unconnected items, before any routing.
+1. The outline (with its corner radius), the mounting holes and the keep-out
+   rule areas come straight from the directives; the stackup is written into
+   the board, layer by layer, with the fab's dielectric thicknesses.
+2. Every footprint is loaded from the libraries the schematic names and its
+   pads are given the nets from the schematic's XML netlist export, so the
+   board starts with a complete ratsnest and the net classes the project
+   file assigns.
+3. Edge connectors are placed on their edges in the stated order, rotated so
+   that they mate outward, flush with the edge or on the footprint's own
+   "PCB Edge" mark, with a stated gap between bodies and a stated distance
+   from each corner. Measure the footprints before trusting the spec's body
+   widths: an RJ45 is 22 mm, not 16.
+4. Parts that straddle an isolation barrier (a relay, an opto-coupler) are
+   placed by hand in the directives, and the barrier polygon is drawn
+   through them between the two sides' pins.
+5. Every other part joins the group of the IC it shares the most signal nets
+   with, and each group is packed into its rectangle (tallest first, in
+   rows). The rectangles are sized from the parts' courtyards; the generator
+   reports a group that does not fit instead of spilling it over a neighbour.
+6. Planes are drawn as zones (the ground plane on L2, an isolated ground
+   island where there is one), stopping a millimetre short of the edge, and
+   a `.kicad_dru` carries the rules the directives need (nothing but the
+   isolated class inside the isolation area; its creepage clearance).
+7. The gate is `kicad-cli pcb drc --severity-all` read by severity: zero
+   errors other than unconnected items (the board is unrouted), with the
+   silkscreen warnings left for the layout work to clear. An error inside a
+   library footprint (a connector's own hole-to-pad spacing under the board's
+   constraint) is checked against the fab's minimums and recorded in the
+   README, not silenced by loosening the constraint. The board's clearance
+   and hole constraints are the fab's published minimums, not KiCad's
+   defaults: a 0.5 mm pitch part fails KiCad's 0.2 mm default clearance.
 
 From there the board file is the source of truth. Placement is refined and
 routing is done in KiCad; the generator is not run again over a board that
@@ -68,4 +89,31 @@ UUIDs keep the footprints linked (see
 
 ## 3. Placement and routing order
 
-Recorded as the baseboard's layout proceeds.
+The order the baseboard's layout follows; each step is checked against the
+directives before the next starts.
+
+1. **Mechanical first.** The edge connectors against the mechanical drawing
+   or a printed 1:1 outline: edge, order, direction, overhang, the holes'
+   clearance. The terminal blocks' orientation is checked in the 3D view,
+   since a footprint does not say which way its plug enters.
+2. **Barriers and isolation.** Any isolated region is settled next: the parts
+   that straddle it, its ground island, the creepage gap, and the DRC rule
+   that enforces it, so nothing routed later can cross it by accident.
+3. **The pairs.** Controlled-impedance pairs are placed and routed before
+   anything else inboard: receptacle, ESD array and controller in a line,
+   the pair on the top layer over the unbroken ground plane, no stubs,
+   lengths matched.
+4. **Power.** Switching regulators get their loops (input capacitor, switch,
+   catch diode, inductor, output capacitor) tight and their thermal copper;
+   the high-current classes get their pours and their via pairs; then the
+   rails to each block.
+5. **Everything else**, block by block, each block's decoupling against its
+   pins before its signals leave it. Crystals last within their block, with
+   nothing routed under them.
+6. **Silkscreen and fabrication**: reference designators readable with the
+   connectors fitted, the markings the directives call for (pin 1, polarity,
+   connector names), the stackup and controlled-impedance notes in the fab
+   drawing.
+
+The gate at every step is DRC at every severity: zero errors, and the
+warnings explained. Unconnected items go to zero at step 5.
