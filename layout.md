@@ -71,8 +71,11 @@ The directives state:
 - **Keep-outs**: areas no part or copper may enter: the strip inside each
   edge, the standoff pads, isolation gaps with their creepage distance, the
   antenna or magnetics regions, the label area.
-- **Component side**: one side or two, and which parts, if any, go on the
-  back.
+- **Component sides**: what stays on top and what may go to the bottom, by
+  the rule in section 3.7, and the height the standoffs allow underneath.
+- **Lanes**: a corridor reserved for each high-current path, and for each
+  controlled-impedance pair once the pairs are placed: the pads it joins,
+  its legs, its layer. Its width follows from the class (section 5).
 - **Special considerations**: controlled-impedance pairs and their class,
   high-current paths and their class and width, the reference plane each
   signal class needs unbroken under it, thermal paths for the regulators,
@@ -119,7 +122,13 @@ the start is reproducible:
    keep-out or on the wrong side of the barrier. The anchors are the knobs
    of the placement: when a block comes out cramped, its anchor moves, not
    its parts.
-5. **Every other part is placed at the pin it serves.** Its host is the
+5. **Lanes are laid next**, from the pads they join through the legs the
+   directives give, as wide as the class's track plus its clearance plus a
+   margin each side. Each becomes a footprint keep-out rule area on both
+   sides, stopping at the courtyards of the parts the lane joins, and the
+   lane's copper at the class width. A lane whose leg is not axis-aligned,
+   whose pad is not on its net, or that runs through a fixed part is refused.
+6. **Every other part is placed at the pin it serves.** Its host is the
    placed part it shares the most specific nets with (two-node nets count
    for most, planes for little, a connector or an IC for more than a
    passive, current-carrying and pair classes for more still); a part whose
@@ -129,7 +138,10 @@ the start is reproducible:
    pads on the shared nets; the part goes on the host's side nearest that
    point, a two-pin part turned so the pad on the host's net faces it, the
    parts along a side packed outward in rings (a bulk capacitor behind the
-   small one before either slides along the side). The order is five
+   small one before either slides along the side). A part the directives
+   allow on the bottom (section 3.7) goes there first, tucked under its
+   host's pin row, clear of through-hole pads and exposed-pad via fields,
+   with the top as its fallback. The order is five
    passes: small decoupling capacitors; the large parts on an IC's or
    connector's own pins (inductors, diodes, crystals); bulk capacitors; the
    small parts on those pins; then parts hosted by passives (an RC chain)
@@ -139,17 +151,21 @@ the start is reproducible:
    board file (`placement.txt`) records each part's host and ring. Those
    far parts, and the indicator LEDs (which belong where they can be seen,
    not at the pin that drives them), are the first hand work.
-6. Planes are drawn as zones (the ground plane on L2, an isolated ground
+7. Planes are drawn as zones (the ground plane on L2, an isolated ground
    island where there is one), stopping a millimetre short of the edge, and
    a `.kicad_dru` carries the rules the directives need (nothing but the
    isolated classes inside the isolation area; their creepage clearance).
-7. The silkscreen pass of section 6 runs over the placement: every
+8. The silkscreen pass of section 6 runs over the placement: every
    designator where it overlaps nothing, omitted otherwise, ICs and
    connectors stepping out to the nearest pocket rather than being omitted.
-8. The gate is `kicad-cli pcb drc --severity-all` read by severity: zero
-   errors other than unconnected items (the board is unrouted) and zero
-   warnings, the silkscreen included.
-9. The board file is reproducible like the schematic
+9. The gate is `kicad-cli pcb drc --severity-all --refill-zones` read by
+   severity: zero errors other than unconnected items (the board is
+   unrouted) and zero warnings, the silkscreen included. The refill (not
+   saved) makes the planes real for the check: a plane that does not fill,
+   an island, a fill in a keep-out all show. A zone outline with a hole does
+   not fill in KiCad: a plane that must avoid a region is drawn as one
+   outline around it.
+10. The board file is reproducible like the schematic
    ([kicad-generation.md](kicad-generation.md)): `pcbnew` draws random UUIDs
    and writes items in their order, so the generator sorts footprints by
    reference, graphics by content and zones by name, derives every UUID in
@@ -245,6 +261,24 @@ parts that straddle the barrier by design cross it, with the barrier drawn
 between their two sides' pins. A DRC rule enforces both the keep-out and the
 clearance.
 
+### 3.7 Both sides
+
+The top side carries what must be reached, seen, cooled or kept in a loop:
+connectors, ICs, relays, inductors, crystals and their load capacitors,
+switches, jumpers, LEDs, test points, bulk and large capacitors, the parts
+of a regulator's switching loop, ESD arrays and series parts on
+controlled-impedance pairs, and every part on a current-carrying class.
+Small parts of the remaining kinds (resistors, capacitors, small diodes and
+transistors, up to the courtyard area the directives give) may go to the
+bottom, **under the pin they serve**, through a via pair at their pads: a
+decoupling capacitor under its supply pin is that pin's capacitor when the
+top is full. Nothing goes under an exposed pad's via field, within the
+hand-soldering margin of a through-hole pad, or taller than the standoffs
+allow. The corner keep-outs, the edge zone, the lanes and the isolation
+rule apply on both sides. The point of the bottom is the top: the area it
+frees is for the blocks' copper zones (section 4), not for more parts. The
+assembler is consulted on double-sided reflow before the first order.
+
 ## 4. Copper
 
 - **Planes and power distribution are polygons.** A power net that feeds
@@ -272,6 +306,11 @@ clearance.
   between, a ground ring, no signals routed through the area.
 - **High-current paths** follow the class width without necking at pads;
   a sense or limit resistor's trace is short and away from switching nodes.
+- **Lanes**: a high-current path is routed inside the lane the directives
+  drew for it, at the class width, with nothing else in the corridor; a
+  pair's lane runs from its receptacle through its ESD array to its IC. A
+  lane's keep-out is narrowed only where the routing proves it wider than
+  it needs to be.
 - Routing order: section 8.
 
 ## 6. Silkscreen
@@ -298,6 +337,8 @@ clearance.
   the generator lists the parts labelled that way for the hand pass.
 - Connector names, pin 1, polarity and the markings the directives call for
   are readable with the connectors fitted.
+- Bottom-side parts follow the same rule on the bottom silk, mirrored to
+  read from the bottom and kept off through-hole pads and via fields.
 
 ## 7. Gates
 
@@ -317,9 +358,11 @@ directives before the next starts.
 1. **Mechanical first.** The edge connectors against the mechanical drawing
    or a printed 1:1 outline: edge, order, direction, overhang, the holes'
    clearance, the 3D view.
-2. **Barriers and isolation.** Any isolated region is settled next: the parts
-   that straddle it, its ground island, the creepage gap, and the DRC rule
-   that enforces it, so nothing routed later can cross it by accident.
+2. **Barriers, isolation and lanes.** Any isolated region is settled next:
+   the parts that straddle it, its ground island, the creepage gap, and the
+   DRC rule that enforces it, so nothing routed later can cross it by
+   accident. The lanes of the high-current paths are laid now, so the parts
+   placed next keep out of them.
 3. **The pairs.** Controlled-impedance pairs are placed and routed before
    anything else inboard: receptacle, ESD array and controller in a line,
    the pair on the top layer over the unbroken ground plane, no stubs,
