@@ -142,10 +142,15 @@ with labels.
   the suffixes KiCad's PCB editor recognises as a pair, with the same base on
   both. Name every segment: the pass-through pins of an ESD array are two
   nets, so the hub side (`HUB_DN4_P/N`) and the connector side
-  (`PORT1_USB_P/N`) are both named, and so is the short stretch between a
-  series resistor and the chip (`FTDI_USB_P/N`). A pair's label sits on its
-  lane like any other; the base name says where the pair goes
-  (`K64_USB`, `HUB_UP`, `J3_USB`). The pairs form a net class in the project
+  (`PORT1_D_P/N`) are both named, and so is the short stretch between a
+  series resistor and the chip (`FTDI_USB_P/N`). The base name says where
+  the segment goes: `<connector>_D` at a receptacle (`J3_D`, `PORT1_D`),
+  `<chip>_USB` at a device (`K64_USB`, `FTDI_USB`), `HUB_UP` and `HUB_DNn`
+  at the hub. A pair's labels sit at wire ends, on the two rows, with the
+  text running along the pair's own wire: at the ESD array's pin ends, at
+  the receptacle's pin ends, at the lane ends before the series parts. The
+  rows of the ESD array and the receptacle line up, so the pair runs
+  straight between them. The pairs form a net class in the project
   file (`USB`: differential width and gap set from the stackup before
   routing), and the sheet note says they are 90 Ω pairs routed as pairs with
   no stubs.

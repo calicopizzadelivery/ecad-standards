@@ -175,7 +175,13 @@ slide passes treat it like any hanging part, and its label is a tag on the
 lane before it whose step is lengthened when the column would otherwise
 land under a neighbour's hanging parts; a node takes three wires, which is
 why the button hangs one column before the R–C column and a header on the
-same net gets a label instead of a fourth wire; and a `#`
+same net gets a label instead of a fourth wire; a label's text must lie over
+the label's own wire, so a route runs its last leg into the pin as one wire
+rather than ending in a separate stub (a label at the pin end then owns the
+whole straight stretch), the fan records where each lane ends and its chain
+begins (`lane_end`) for labels that belong there, and a side's lanes can be
+lengthened (`reach` per side) when a label at the lane end would otherwise
+run into the lanes' own turn columns; and a `#`
 comment appended mid-line to a dictionary literal
 comments out the rest of the entries on that line and the fan silently
 drops those pins (the ERC catches it as unconnected pins).
