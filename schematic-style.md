@@ -134,6 +134,19 @@ with labels.
   capacitor hung down there: the time constant is one column. Texts: the
   button's toward the hub, under the lane; the resistor's and capacitor's
   away from it.
+- **Nothing is drawn over anything else.** Two wires never share a
+  stretch, a wire end never lands on another wire without a junction, and
+  nets cross at right angles only where the topology leaves no choice. The
+  places this goes wrong are always the same: several routes into a stacked
+  connector from one side, which must take staggered columns and rows (the
+  route bound for the farthest pin takes the outermost column and the
+  nearest row, so none crosses another); a connector whose pins are ordered
+  against the part feeding it, which is fixed by flipping the part (a relay
+  turned top-to-bottom so its common contact meets the header's first pin)
+  rather than by crossing wires; several routes into one pin, which share
+  one stub; a second tap on a wire, which lands beside the first tap, never
+  on it; and a label whose lane runs on past the route's target and doubles
+  back. The geometry gate reports every one of these and is kept at zero.
 - **Sub-circuits are clusters.** A port is its switch, its ESD, its connector
   and its LED in one group, repeated per port, aligned so the eye can diff
   them.

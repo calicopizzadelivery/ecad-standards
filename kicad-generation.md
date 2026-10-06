@@ -72,7 +72,11 @@ must get right, each one learned by getting it wrong once.
 - `(mirror y)` after `(at X Y rot)` flips a symbol left-to-right. Pins keep
   their top/bottom sides, horizontal pin angles swap, library field positions
   mirror and their left/right justification swaps. Use it instead of a 180°
-  rotation whenever a part has pins on its top or bottom edge.
+  rotation whenever a part has pins on its top or bottom edge. **The mirror
+  applies on the sheet, after the rotation**: `(mirror x)` on a symbol at 90°
+  flips it top-to-bottom as drawn, not in its library frame. A generator that
+  mirrors first and rotates second puts a rotated symbol's pins on the wrong
+  side and ERC reports the wires it drew to them as dangling.
 - A local label's text is drawn above its wire, 0.4 to 1.9 mm above the
   anchor, whichever way it reads; a global label's flag is centred on the
   anchor. A layout check that models both as centred misses a local label on
@@ -112,9 +116,12 @@ rotations, wired to computed points, must land on four distinct nets.
 
 1. `kicad-cli sch erc --severity-all`: zero.
 2. A **geometry check** over each sheet file: every wire end and every pin end
-   that lies on a wire it does not terminate is a contact; the only acceptable
-   ones are a lane overlapping its own stub (same net). The baseboard's
-   `gen/check_geom.py` does this.
+   that lies on a wire it does not terminate, with no junction drawn there, is
+   a contact, and any two collinear wires that share more than a point are an
+   overlap. Zero of either: a shared stub drawn twice, a route run over a
+   joined pin's stub and a tap riding on another tap's wire all read as one
+   line on paper and are exactly what the gate exists to catch. The
+   baseboard's `gen/check_geom.py` does this.
 3. A **wire-level connectivity trace** of each sheet: union wires by touching
    endpoints, attach labels, power symbols and pins, and report any component
    that carries two rails or a rail plus a differently named label. This finds
@@ -182,7 +189,10 @@ whole straight stretch; two routes that meet at one pin keep a shared stub,
 or their last legs overlap), the fan records where each lane ends and its chain
 begins (`lane_end`) for labels that belong there, and a side's lanes can be
 lengthened (`reach` per side) when a label at the lane end would otherwise
-run into the lanes' own turn columns; and a `#`
+run into the lanes' own turn columns; two in-line parts on adjacent finite
+rows make the engine slide the second past the first row's whole content,
+so a pair of series resistors ends its rows as routes (an `End` with the
+label placed on it) and the rows spread to 3.81 mm instead; and a `#`
 comment appended mid-line to a dictionary literal
 comments out the rest of the entries on that line and the fan silently
 drops those pins (the ERC catches it as unconnected pins).
