@@ -178,7 +178,8 @@ why the button hangs one column before the R–C column and a header on the
 same net gets a label instead of a fourth wire; a label's text must lie over
 the label's own wire, so a route runs its last leg into the pin as one wire
 rather than ending in a separate stub (a label at the pin end then owns the
-whole straight stretch), the fan records where each lane ends and its chain
+whole straight stretch; two routes that meet at one pin keep a shared stub,
+or their last legs overlap), the fan records where each lane ends and its chain
 begins (`lane_end`) for labels that belong there, and a side's lanes can be
 lengthened (`reach` per side) when a label at the lane end would otherwise
 run into the lanes' own turn columns; and a `#`
