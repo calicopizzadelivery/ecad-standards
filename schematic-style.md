@@ -137,6 +137,18 @@ with labels.
 - **Sub-circuits are clusters.** A port is its switch, its ESD, its connector
   and its LED in one group, repeated per port, aligned so the eye can diff
   them.
+- **Differential pairs are named for the router.** Every high-speed pair
+  (USB 2.0 D+/D−, and any other) carries net names `<base>_P` and `<base>_N`,
+  the suffixes KiCad's PCB editor recognises as a pair, with the same base on
+  both. Name every segment: the pass-through pins of an ESD array are two
+  nets, so the hub side (`HUB_DN4_P/N`) and the connector side
+  (`PORT1_USB_P/N`) are both named, and so is the short stretch between a
+  series resistor and the chip (`FTDI_USB_P/N`). A pair's label sits on its
+  lane like any other; the base name says where the pair goes
+  (`K64_USB`, `HUB_UP`, `J3_USB`). The pairs form a net class in the project
+  file (`USB`: differential width and gap set from the stackup before
+  routing), and the sheet note says they are 90 Ω pairs routed as pairs with
+  no stubs.
 
 ## 2a. The sheet itself
 

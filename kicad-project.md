@@ -29,6 +29,15 @@ second, and so on. Connectors keep the J-numbers the specification gave them
 (`J1` is always the upstream USB-C), because people wire to them by number.
 Relays are `K`, crystals `Y`, solder jumpers `JP`, holes `H`.
 
+## Net classes
+
+Net classes live in the project file, `net_settings` (version 4): a list of
+`classes`, each with its track width, clearance, via, differential pair width
+and gap, and a list of `netclass_patterns` that assign nets to classes by
+wildcard (`*_USB_?`, `HUB_DN?_?`). A generator writes them, so a fresh board
+starts with the pairs classed; the differential geometry is a placeholder
+until the stackup is chosen, and the README says so.
+
 ## What is committed
 
 Everything KiCad needs to open the project, plus the artefacts a reviewer
