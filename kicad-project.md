@@ -38,7 +38,12 @@ wildcard (`*_USB_?`, `HUB_DN?_?`, `PSU_V*`). A class that carries current
 says so in its name (`PSU_3A`, `PWR_6A`) and sets the track width for it.
 A generator writes them, so a fresh board starts with every pair and every
 high-current net classed; the differential geometry follows the stackup the
-directives name.
+directives name. A pattern must match the net's full name: a net local to a
+sheet carries its sheet path (`/USB hub/HUB_UP_N`), so its pattern starts
+with `*` (`*HUB_UP_?`), while a global net's does not need to. The build
+checks that every `_P`/`_N` pair (both sides of a flow-through ESD array
+included) landed in a pair class, and refuses the build otherwise: a pair
+outside its class is routed at the default geometry without anyone noticing.
 
 ## What is committed
 

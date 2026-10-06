@@ -267,7 +267,8 @@ The top side carries what must be reached, seen, cooled or kept in a loop:
 connectors, ICs, relays, inductors, crystals and their load capacitors,
 switches, jumpers, LEDs, test points, bulk and large capacitors, the parts
 of a regulator's switching loop, ESD arrays and series parts on
-controlled-impedance pairs, and every part on a current-carrying class.
+controlled-impedance pairs, ESD protection (3.8), and every part on a
+current-carrying class.
 Small parts of the remaining kinds (resistors, capacitors, small diodes and
 transistors, up to the courtyard area the directives give) may go to the
 bottom, **under the pin they serve**, through a via pair at their pads: a
@@ -278,6 +279,33 @@ allow. The corner keep-outs, the edge zone, the lanes and the isolation
 rule apply on both sides. The point of the bottom is the top: the area it
 frees is for the blocks' copper zones (section 4), not for more parts. The
 assembler is consulted on double-sided reflow before the first order.
+
+### 3.8 ESD protection
+
+- **An ESD diode sits in line with the signal it protects, at the
+  connector.** The signal runs from the connector pad to the protection
+  device and on from there; nothing else (a switch, a pull-up, a capacitor,
+  a series resistor) comes between the connector and the diode, and no stub
+  longer than the device's own pad hangs off the signal to reach it. The
+  diode's ground pad goes to the plane by a via beside it, never through a
+  trace. ESD parts are placed first of all at a connector's signal pins, on
+  the connector's side of the board.
+- **For differential pairs this is mandatory and flow-through**: the pair
+  enters the array on one pin row and leaves on the other, on one layer,
+  the array turned so its connector-side pins face the connector and its
+  IC-side pins face the IC, the array on the straight path between them.
+  The two nets a flow-through array creates (connector side, IC side) are
+  both named as a pair and both in the pair's class, so the segment through
+  the array is routed at the pair's impedance; the generator refuses a
+  build in which a `_P`/`_N` pair is outside a pair class.
+- **USB 2.0 is routed as 90 Ω differential controlled impedance**, end to
+  end from the receptacle through the ESD array to the transceiver, the
+  width and gap of its class computed from the directives' stackup and
+  confirmed by the fab's impedance calculator, within 10 %. USB 3.x
+  SuperSpeed pairs likewise at 90 Ω (85 Ω only where the device's datasheet
+  asks for it), with an array rated for them (well under 1 pF). The same
+  holds for every other pair the schematic names: the class states the
+  impedance, and the pair never leaves it.
 
 ## 4. Copper
 
@@ -299,7 +327,9 @@ assembler is consulted on double-sided reflow before the first order.
 - **Controlled-impedance pairs** (parent 13.11): on one layer over an
   unbroken reference plane, no vias except at the pads, end-to-end, the two
   tracks of a pair matched in length, the geometry from the directives'
-  stackup and the fab's impedance calculator.
+  stackup and the fab's impedance calculator. USB 2.0 pairs are 90 Ω
+  differential, through their ESD array (3.8), from receptacle to
+  transceiver.
 - **Loops small** (parent 13.12.2 g): every signal has its return directly
   under it; a signal that changes layer gets a ground via beside it.
 - **Crystals**: the shortest possible tracks to the IC, load capacitors
