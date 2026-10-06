@@ -34,6 +34,13 @@ must get right, each one learned by getting it wrong once.
   one is inserted. Pin the dates in the netlist, PDF and ERC headers to the
   title-block date too, or they are the last thing that differs between two
   builds of the same design.
+  The generator refuses to write a UUID before its namespace is set, so a
+  random one cannot slip back in.
+- **Units of one symbol share one Value.** KiCad treats differing unit
+  values as an annotation error: every netlist export warns, ERC says
+  nothing, and the BOM lists the values joined by a comma. Tell the units
+  apart by the suffix KiCad adds to the reference (J4A, J4B) and by the
+  labels of each unit's cluster, never by the Value.
 - Power symbols come from `power.kicad_sym`; **the net name is the Value
   field**, so a `+5V` symbol with Value `+5V_PORTS` makes a net called
   `+5V_PORTS`. GND symbols are the same part with a different value.
@@ -101,7 +108,7 @@ rotations, wired to computed points, must land on four distinct nets.
   block you are fixing.
 - `sch export bom --format-preset CSV --group-by Value,Footprint`.
 
-## Four gates a generated schematic must pass
+## Five gates a generated schematic must pass
 
 1. `kicad-cli sch erc --severity-all`: zero.
 2. A **geometry check** over each sheet file: every wire end and every pin end
@@ -136,6 +143,16 @@ rotations, wired to computed points, must land on four distinct nets.
    frame and title
    block positions come from a render of KiCad's default A3 sheet: inner frame
    line 12 mm in, title block from x = 300 mm and y = 253 mm.
+5. **Reproducibility**: a second build of the same design changes nothing.
+   Build, stage the outputs, build again; `git status` must be empty, the
+   PDF and the ERC report included. This is what the derived UUIDs and the
+   pinned dates buy, and the check names the last random thing in the output
+   when it fails. KiCad's PDF export writes its creation date as
+   `D:YYYY:MM:DD:HH:MM:SS` in the document's Info dictionary; replace it with
+   the title-block date at the same length, so the file's offsets stay valid.
+   The ERC report's first line carries the export time; rewrite it the same
+   way. A commit then touches only the sheets whose design changed, and a
+   diff of a generated file is a diff of the design.
 
 Log every wire with the call stack that drew it (`<sheet>.wires.json`) while
 developing a layout engine: a contact at (x, y) then names its author.

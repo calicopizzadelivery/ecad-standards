@@ -104,7 +104,10 @@ with labels.
   sheet for this, library symbols included.
 - **Two parts on one footprint are two units**: a stacked USB-A receptacle
   is drawn as two single-port connectors with the same reference, so each
-  port's switch, ESD and receptacle form one cluster.
+  port's switch, ESD and receptacle form one cluster. Both units carry one
+  Value (KiCad flags differing unit values as an annotation error); the port
+  is told by the unit letter KiCad adds to the reference and by its cluster's
+  labels.
 - **Clock sources flow downward.** A crystal (or oscillator) hangs below
   its two XTAL lanes: the lanes run out past everything else on that side
   of the hub to two columns a crystal's pin pitch apart, turn down at right

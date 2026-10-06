@@ -33,7 +33,10 @@ Relays are `K`, crystals `Y`, solder jumpers `JP`, holes `H`.
 
 Everything KiCad needs to open the project, plus the artefacts a reviewer
 needs without KiCad: `erc.txt`, the PDF, `bom.csv`. Not committed:
-`*.kicad_prl`, `*-backups/`, `fp-info-cache`.
+`*.kicad_prl`, `*-backups/`, `fp-info-cache`. Nothing committed carries an
+export timestamp: a generated project pins the ERC header and the PDF date to
+the title-block date (gate 5 in [kicad-generation.md](kicad-generation.md)),
+so a commit shows design changes and nothing else.
 
 ## The handoff rule
 
