@@ -150,6 +150,19 @@ with labels.
 - **Sub-circuits are clusters.** A port is its switch, its ESD, its connector
   and its LED in one group, repeated per port, aligned so the eye can diff
   them.
+- **Annotate what layout must know.** Everything the board's routing depends
+  on is written into the schematic, where the layout engineer reads it next
+  to the circuit: every controlled-impedance pair (its `_P`/`_N` names, its
+  class, the impedance in the sheet note), every high-current path (a net
+  class directive flag on the net whose class name carries the current:
+  `PSU_3A`, `USB_VBUS_3A`, `PWR_6A`, with the trace width the note gives it),
+  and every special consideration (an isolation barrier and its creepage,
+  a part that must sit against another, a plane that must stay unbroken).
+  The classes exist in the project file with their geometry, assigned by
+  pattern, so the board inherits them; the flags and notes are what a
+  reader sees. A flag sits at a wire end like a label, points away from the
+  parts, and goes on the rail's flag strip when the circuit's own wires have
+  no room.
 - **Differential pairs are named for the router.** Every high-speed pair
   (USB 2.0 D+/D−, and any other) carries net names `<base>_P` and `<base>_N`,
   the suffixes KiCad's PCB editor recognises as a pair, with the same base on

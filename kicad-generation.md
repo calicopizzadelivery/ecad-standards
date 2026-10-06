@@ -77,6 +77,13 @@ must get right, each one learned by getting it wrong once.
   flips it top-to-bottom as drawn, not in its library frame. A generator that
   mirrors first and rotates second puts a rotated symbol's pins on the wrong
   side and ERC reports the wires it drew to them as dangling.
+- A **net class directive** is `(netclass_flag "" (length 2.54) (shape round)
+  (at X Y rot) (fields_autoplaced no) (effects ...) (uuid ...) (property
+  "Netclass" "PSU_3A" (at ...) (effects ...)))`: a 2.54 mm stem from the
+  anchor with the class name beside its far end, and the net it touches
+  takes the class. The XML netlist export reports the class of every net
+  (`class="..."`), which is the check that the flags and the project file's
+  patterns agree.
 - A local label's text is drawn above its wire, 0.4 to 1.9 mm above the
   anchor, whichever way it reads; a global label's flag is centred on the
   anchor. A layout check that models both as centred misses a local label on

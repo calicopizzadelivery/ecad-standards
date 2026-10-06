@@ -34,9 +34,11 @@ Relays are `K`, crystals `Y`, solder jumpers `JP`, holes `H`.
 Net classes live in the project file, `net_settings` (version 4): a list of
 `classes`, each with its track width, clearance, via, differential pair width
 and gap, and a list of `netclass_patterns` that assign nets to classes by
-wildcard (`*_USB_?`, `HUB_DN?_?`). A generator writes them, so a fresh board
-starts with the pairs classed; the differential geometry is a placeholder
-until the stackup is chosen, and the README says so.
+wildcard (`*_USB_?`, `HUB_DN?_?`, `PSU_V*`). A class that carries current
+says so in its name (`PSU_3A`, `PWR_6A`) and sets the track width for it.
+A generator writes them, so a fresh board starts with every pair and every
+high-current net classed; the differential geometry follows the stackup the
+directives name.
 
 ## What is committed
 
