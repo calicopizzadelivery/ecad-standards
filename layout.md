@@ -45,7 +45,7 @@ Tailorings, all recorded in the project's directives:
 | 14.3.2 c | no components within 5 mm of the edge | edge connectors are at the edge by design; other parts keep 3 mm, the assembler consulted |
 | 14.3.1 Table 14-1 A1 | tracks 0.7 mm from the edge | kept; planes and pads 0.25 mm (A6), as the fab allows |
 | 13.6.2 b | tracks ≤ 5 °C rise preferred | 10 °C (13.6.2 a) is the design figure; the classes' widths come from it |
-| 14.3.2 Table 14-2 B1 | 0.6 mm between bodies | KiCad courtyards (0.25 mm each side) plus 0.2 mm packing margin |
+| 14.3.2 Table 14-2 B1 | 0.6 mm between bodies | met as KiCad courtyards (0.25 mm each side) plus a 0.1 mm packing margin |
 
 ## 1. Entering layout: the project directives
 
