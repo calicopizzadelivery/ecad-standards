@@ -45,7 +45,7 @@ Tailorings, all recorded in the project's directives:
 | 14.3.2 c | no components within 5 mm of the edge | edge connectors are at the edge by design; other parts keep 3 mm, the assembler consulted |
 | 14.3.1 Table 14-1 A1 | tracks 0.7 mm from the edge | kept; planes and pads 0.25 mm (A6), as the fab allows |
 | 13.6.2 b | tracks ≤ 5 °C rise preferred | 10 °C (13.6.2 a) is the design figure; the classes' widths come from it |
-| 14.3.2 Table 14-2 B1 | 0.6 mm between bodies | met as KiCad courtyards (0.25 mm each side) plus a 0.1 mm packing margin |
+| 14.3.2 Table 14-2 B1 | 0.6 mm between bodies | met as KiCad courtyards (0.25 mm each side) plus a 0.25 mm packing margin, so two parts' silk outlines (drawn at the courtyard edge) never touch |
 
 ## 1. Entering layout: the project directives
 
@@ -104,25 +104,57 @@ the start is reproducible:
 3. Edge connectors are placed on their edges in the stated order, rotated so
    that they mate outward, flush with the edge or on the footprint's own
    "PCB Edge" mark, with a stated gap between bodies and a stated distance
-   from each corner. The mating direction of a horizontal connector
-   footprint follows one rule across KiCad's library: **the solder pins sit
-   at the rear, so the mating face is the end of the body farthest from the
-   pad rows**; a pin header mates where its pins point. The 3D view is the
-   check: a jack facing a mounting hole cannot be plugged in.
+   from each corner, and from then on **locked**: the directives carry their
+   positions, and a later placement pass moves everything but them. The
+   mating direction of a horizontal connector footprint follows one rule
+   across KiCad's library: **the solder pins sit at the rear, so the mating
+   face is the end of the body farthest from the pad rows**; a pin header
+   mates where its pins point. The 3D view is the check: a jack facing a
+   mounting hole cannot be plugged in.
 4. Parts that straddle an isolation barrier (a relay, an opto-coupler) are
    placed by hand in the directives, and the barrier polygon is drawn
-   through them between the two sides' pins.
-5. Every other part joins the group of the IC it shares the most signal nets
-   with, and each group is packed into its rectangles (tallest first, in
-   rows). The rectangles are sized from the parts' courtyards; the generator
-   reports a group that does not fit instead of spilling it over a neighbour.
+   through them between the two sides' pins. The ICs are **anchored** by
+   hand too, by flow (section 3.1), each with a line saying why it is there;
+   the generator refuses an anchor table whose parts overlap, stand in a
+   keep-out or on the wrong side of the barrier. The anchors are the knobs
+   of the placement: when a block comes out cramped, its anchor moves, not
+   its parts.
+5. **Every other part is placed at the pin it serves.** Its host is the
+   placed part it shares the most specific nets with (two-node nets count
+   for most, planes for little, a connector or an IC for more than a
+   passive, current-carrying and pair classes for more still); a part whose
+   nets are all planes (a decoupling or bulk capacitor) belongs to the IC
+   the schematic draws it beside, at that IC's next free pin on the rail, a
+   capacitor never to another capacitor. The attachment point is the host's
+   pads on the shared nets; the part goes on the host's side nearest that
+   point, a two-pin part turned so the pad on the host's net faces it, the
+   parts along a side packed outward in rings (a bulk capacitor behind the
+   small one before either slides along the side). The order is five
+   passes: small decoupling capacitors; the large parts on an IC's or
+   connector's own pins (inductors, diodes, crystals); bulk capacitors; the
+   small parts on those pins; then parts hosted by passives (an RC chain)
+   and parts whose partner was not down yet. A part no ring can take goes
+   to the nearest free spot to its pin; the generator reports every part it
+   could not keep within 8 mm of its pin, and a placement report beside the
+   board file (`placement.txt`) records each part's host and ring. Those
+   far parts, and the indicator LEDs (which belong where they can be seen,
+   not at the pin that drives them), are the first hand work.
 6. Planes are drawn as zones (the ground plane on L2, an isolated ground
    island where there is one), stopping a millimetre short of the edge, and
    a `.kicad_dru` carries the rules the directives need (nothing but the
    isolated classes inside the isolation area; their creepage clearance).
-7. The gate is `kicad-cli pcb drc --severity-all` read by severity: zero
-   errors other than unconnected items (the board is unrouted), with the
-   silkscreen warnings left for the layout work to clear. An error inside a
+7. The silkscreen pass of section 6 runs over the placement: every
+   designator where it overlaps nothing, omitted otherwise, ICs and
+   connectors stepping out to the nearest pocket rather than being omitted.
+8. The gate is `kicad-cli pcb drc --severity-all` read by severity: zero
+   errors other than unconnected items (the board is unrouted) and zero
+   warnings, the silkscreen included.
+9. The board file is reproducible like the schematic
+   ([kicad-generation.md](kicad-generation.md)): `pcbnew` draws random UUIDs
+   and writes items in their order, so the generator sorts footprints by
+   reference, graphics by content and zones by name, derives every UUID in
+   document order, pins the DRC report's date and sorts its entries. Two
+   generations of one design are byte-identical, report included. An error inside a
    library footprint (a connector's own hole-to-pad spacing under the board's
    constraint) is checked against the fab's minimums and recorded in the
    README, not silenced by loosening the constraint. The board's clearance
@@ -257,9 +289,13 @@ clearance.
   courtyard without overlapping, it is omitted. In a cluster where more than
   a third of the passives would lose theirs, all of the cluster's passives
   lose theirs and the cluster is outlined and named on silk instead (an IC's
-  decoupling, a port's switch and filter); the fabrication layer keeps every
-  designator for the assembly drawing. ICs, connectors, relays, polarity
-  marks and pin-1 marks are never omitted.
+  decoupling, a port's switch and filter), where an outline can be drawn
+  without crossing another part; where it cannot (clusters that interleave),
+  the host's own designator names the cluster. The fabrication layer keeps
+  every designator for the assembly drawing. ICs, connectors, relays,
+  polarity marks and pin-1 marks are never omitted: a designator that fits
+  nowhere within 1 mm of its part steps out to the nearest free pocket, and
+  the generator lists the parts labelled that way for the hand pass.
 - Connector names, pin 1, polarity and the markings the directives call for
   are readable with the connectors fitted.
 
