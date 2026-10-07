@@ -43,7 +43,7 @@ DEFAULTS = {"EDGE_ZONE": 3.0, "HOLE_CLEAR_R": 4.0, "PACK_MARGIN": 0.15, "RING_GA
             "BOTTOM_NEVER_CLASSES": set(), "BOTTOM_TUCK": 1.75, "THT_MARGIN": 0.5, "EP_MARGIN": 0.6, "REFDES_SIZES": (0.8, 0.7),
             "ESD_VALUES": ("USBLC", "PESD", "ESDA", "TPD", "SRV05", "IP42", "TVS"), "FIXED": {}, "ANCHORS": {},
             "ESCAPE_WIDTH": 0.2, "ESCAPE_LENGTH": 1.2, "CHAMFER": 0.8, "VIA_PAIR_OFFSET": 0.45, "BRIDGE_DEPTHS": (0.8, 1.6), "THT_STUB": 1.0, "DIRECT_STUB": 0.4,
-            "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5}
+            "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5, "ISLAND_GAP": 6.0, "ISLAND_REACH": 25.0, "ISLAND_SPREAD": 15.0}
 
 
 class Directives:
@@ -100,6 +100,150 @@ def sch_positions():
             if not ref.startswith("#") and ref not in pos:
                 pos[ref] = (os.path.basename(f), float(x), float(y))
     return pos
+
+
+def sexp(text):
+    """A KiCad s-expression as nested lists (strings unquoted, numbers as floats)."""
+    tokens = re.findall(r'\(|\)|"(?:[^"\\]|\\.)*"|[^\s()"]+', text)
+    stack = [[]]
+    for tok in tokens:
+        if tok == "(":
+            stack.append([])
+        elif tok == ")":
+            node = stack.pop(); stack[-1].append(node)
+        elif tok.startswith('"'):
+            stack[-1].append(tok[1:-1])
+        else:
+            try:
+                stack[-1].append(float(tok))
+            except ValueError:
+                stack[-1].append(tok)
+    return stack[0]
+
+
+def sch_islands(gap, reach):
+    """The schematic's islands (layout.md 3.1): on each sheet, the symbols whose bodies, grown by half the gap, touch,
+    or that a wire joins (a pin end on a wire end, on a wire's run, or on another pin) while their bodies lie within
+    the reach of each other (a supply bus or a long wire across the sheet joins areas, not an island), transitively.
+    Returns {ref: island id} and {island id: (sheet, [refs], bbox)}. A symbol's body and pin ends come from its
+    library graphics, placed by the instance's position, mirror and rotation; power symbols and parts without a
+    footprint are not members. A label joins nothing: what leaves an island by name is another island's."""
+    def lib_geometry(sym):
+        xs, ys, pins = [], [], []
+        def walk(node):
+            for item in node:
+                if not isinstance(item, list) or not item:
+                    continue
+                head = item[0]
+                if head == "property":
+                    continue
+                if head in ("start", "end", "mid", "center", "xy") and len(item) >= 3 and all(isinstance(v, float) for v in item[1:3]):
+                    xs.append(item[1]); ys.append(item[2])
+                elif head == "pin":
+                    at = next((i for i in item if isinstance(i, list) and i and i[0] == "at"), None)
+                    ln = next((i for i in item if isinstance(i, list) and i and i[0] == "length"), None)
+                    if at and len(at) >= 3:
+                        xs.append(at[1]); ys.append(at[2]); pins.append((at[1], at[2]))
+                        if ln and len(at) >= 4:
+                            a = math.radians(at[3]); xs.append(at[1] + ln[1] * math.cos(a)); ys.append(at[2] + ln[1] * math.sin(a))
+                elif head == "circle":
+                    c = next((i for i in item if isinstance(i, list) and i and i[0] == "center"), None)
+                    r = next((i for i in item if isinstance(i, list) and i and i[0] == "radius"), None)
+                    if c and r:
+                        xs.extend([c[1] - r[1], c[1] + r[1]]); ys.extend([c[2] - r[1], c[2] + r[1]])
+                walk(item)
+        walk(sym)
+        return ((min(xs), min(ys), max(xs), max(ys)) if xs else (-1.27, -1.27, 1.27, 1.27)), pins
+    def place(px, py, at, mirror):
+        py = -py                                                   # library y is up, the sheet's is down
+        if mirror == "x": py = -py
+        if mirror == "y": px = -px
+        rot = math.radians(at[3] if len(at) > 3 else 0.0)
+        return (at[1] + px * math.cos(rot) + py * math.sin(rot), at[2] - px * math.sin(rot) + py * math.cos(rot))
+    def key(p):
+        return (round(p[0], 2), round(p[1], 2))
+    ref_island, islands = {}, {}
+    for f in sorted(glob.glob(os.path.join(OUT, "*.kicad_sch"))):
+        doc = sexp(open(f, encoding="utf-8").read())[0]
+        libs, wires = {}, []
+        for node in doc:
+            if not (isinstance(node, list) and node):
+                continue
+            if node[0] == "lib_symbols":
+                for sym in node[1:]:
+                    if isinstance(sym, list) and sym and sym[0] == "symbol":
+                        libs[sym[1]] = lib_geometry(sym)
+            elif node[0] == "wire":
+                pts = next((i for i in node if isinstance(i, list) and i and i[0] == "pts"), [])
+                xy = [key((i[1], i[2])) for i in pts[1:] if isinstance(i, list) and i and i[0] == "xy"]
+                if len(xy) >= 2:
+                    wires.append((xy[0], xy[-1]))
+        parent = {}
+        def find(a):
+            parent.setdefault(a, a)
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]; a = parent[a]
+            return a
+        def union(a, b):
+            parent[find(a)] = find(b)
+        for a, b in wires:
+            union(a, b)
+        pts = {p for w in wires for p in w}
+        for p in pts:                                              # a wire ending on another wire's run joins it
+            for a, b in wires:
+                if p != a and p != b and min(a[0], b[0]) - 0.01 <= p[0] <= max(a[0], b[0]) + 0.01 and min(a[1], b[1]) - 0.01 <= p[1] <= max(a[1], b[1]) + 0.01 \
+                        and abs((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) < 0.02 * max(1.0, math.hypot(b[0] - a[0], b[1] - a[1])):
+                    union(p, a)
+        symbols = []
+        for node in doc:
+            if not (isinstance(node, list) and node and node[0] == "symbol"):
+                continue
+            props = {i[1]: i[2] for i in node if isinstance(i, list) and i and i[0] == "property" and len(i) >= 3}
+            ref = props.get("Reference", ""); fp = props.get("Footprint", "")
+            if ref.startswith("#") or not fp or ref in ref_island or any(ref == s[0] for s in symbols):
+                continue
+            lib_id = next((i[1] for i in node if isinstance(i, list) and i and i[0] == "lib_id"), None)
+            at = next((i for i in node if isinstance(i, list) and i and i[0] == "at"), ["at", 0.0, 0.0, 0.0])
+            mirror = next((i[1] for i in node if isinstance(i, list) and i and i[0] == "mirror"), None)
+            (x0, y0, x1, y1), pins = libs.get(lib_id, ((-1.27, -1.27, 1.27, 1.27), []))
+            corners = [place(px, py, at, mirror) for px, py in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+            box = (min(c[0] for c in corners) - gap / 2, min(c[1] for c in corners) - gap / 2, max(c[0] for c in corners) + gap / 2, max(c[1] for c in corners) + gap / 2)
+            symbols.append((ref, box, [key(place(px, py, at, mirror)) for px, py in pins]))
+        sym_parent = {ref: ref for ref, _, _ in symbols}
+        def sfind(r):
+            while sym_parent[r] != r:
+                sym_parent[r] = sym_parent[sym_parent[r]]; r = sym_parent[r]
+            return r
+        by_wire = collections.defaultdict(list)
+        for ref, _, pins in symbols:
+            for p in pins:
+                if p in pts or any(p in s[2] for s in symbols if s[0] != ref):   # on a wire, or pin to pin
+                    by_wire[find(p)].append(ref)
+        box_of = {ref: box for ref, box, _ in symbols}
+        def body_gap(a, b):
+            ba, bb = box_of[a], box_of[b]
+            return max(0.0, max(bb[0] - ba[2], ba[0] - bb[2]) + gap, max(bb[1] - ba[3], ba[1] - bb[3]) + gap)
+        for refs in by_wire.values():
+            for i, ra in enumerate(refs):
+                for rb in refs[i + 1:]:
+                    if body_gap(ra, rb) <= reach:
+                        sym_parent[sfind(ra)] = sfind(rb)
+        for i, (ra, ba, _) in enumerate(symbols):
+            for rb, bb, _ in symbols[i + 1:]:
+                if ba[0] < bb[2] and ba[2] > bb[0] and ba[1] < bb[3] and ba[3] > bb[1]:
+                    sym_parent[sfind(ra)] = sfind(rb)
+        groups = collections.defaultdict(list)
+        for ref, box, _ in symbols:
+            groups[sfind(ref)].append((ref, box))
+        sheet = os.path.basename(f)
+        for members in sorted(groups.values(), key=lambda m: natural(min((r for r, _ in m), key=natural))):
+            refs = sorted((r for r, _ in members), key=natural)
+            iid = f"{sheet.rsplit('.', 1)[0]}/{refs[0]}"
+            islands[iid] = (sheet, refs, (min(b[0] for _, b in members) + gap / 2, min(b[1] for _, b in members) + gap / 2,
+                                          max(b[2] for _, b in members) - gap / 2, max(b[3] for _, b in members) - gap / 2))
+            for r in refs:
+                ref_island[r] = iid
+    return ref_island, islands
 
 
 def load_footprint(fpid):
@@ -256,6 +400,12 @@ class Placer:
         self.corners = [(0 if hx < W / 2 else W - s, 0 if hy < H / 2 else H - s) for hx, hy in L.HOLES.values()]
         self.corners = [(x0, y0, x0 + s, y0 + s) for x0, y0 in self.corners]
         self.regions = list(L.ISOLATION_REGIONS)         # each: name, outline, rects, grown, nets (regex), classes, gap, island
+        self.island, self.islands = sch_islands(L.ISLAND_GAP, L.ISLAND_REACH)   # layout.md 3.1: {ref: island}, {island: (sheet, refs, sheet bbox)}
+        self.hub_of = {}                                  # island -> its hub: the member with the most pads, connectors aside
+        for iid, (_, refs, _) in self.islands.items():
+            members = [r for r in refs if r in self.fps and kind(r) != "conn" and r not in L.HOLES]
+            if members:
+                self.hub_of[iid] = max(members, key=lambda r: (len(self.pads_of[r]), kind(r) == "ic", [-ord(c) for c in r]))
 
     def has_specific(self, ref):
         return any(n and n not in self.plane and not n.startswith("unconnected-") for _, n in self.pads_of[ref])
@@ -791,6 +941,7 @@ class Placer:
         or None. Recomputed every round: a part whose partner on a two-node net is not down yet scores low
         on its planes alone, and is picked up by the partner once that is placed."""
         scores, shared = collections.Counter(), collections.defaultdict(list)
+        isl = self.island.get(ref)
         for num, net in self.pads_of[ref]:
             if not net or net.startswith("unconnected-"):
                 continue
@@ -799,10 +950,22 @@ class Placer:
             for hr, hp in nodes:
                 if hr == ref or hr not in self.side or hr in L.HOLES:
                     continue
-                bonus = {"conn": 2.5, "ic": 1.3, "passive": 1.0}[kind(hr)] * (1.5 if self.same_sheet(hr, ref) else 1.0)
+                where = 2.5 if (isl and self.island.get(hr) == isl) else 1.5 if self.same_sheet(hr, ref) else 1.0
+                bonus = {"conn": 2.5, "ic": 1.3, "passive": 1.0}[kind(hr)] * where
                 scores[hr] += w * bonus; shared[hr].append((hp, net))
         if not scores:
             return None
+        if kind(ref) == "ic" and any(kind(hr) != "passive" for hr in scores):   # an IC is never hosted by a passive while a connector or IC will do
+            scores = collections.Counter({hr: s for hr, s in scores.items() if kind(hr) != "passive"})
+        esd_at_conn = self.is_esd(ref) and any(kind(hr) == "conn" for hr in scores)   # 3.8 outranks 3.1: ESD stays at its connector
+        if esd_at_conn:
+            scores = collections.Counter({hr: s for hr, s in scores.items() if kind(hr) == "conn"})
+        hub = self.hub_of.get(isl)
+        waiting = bool(hub) and hub != ref and hub not in self.side and not esd_at_conn   # 3.1: an island's hub goes down first, its mates follow it
+        mates = [hr for hr in scores if isl and self.island.get(hr) == isl]
+        if mates and ref != hub and not esd_at_conn:               # the board mimics the schematic's islands: a part whose placed island
+            scores = collections.Counter({hr: scores[hr] for hr in mates})   # mate shares any net with it is placed with that mate
+            shared = {hr: shared[hr] for hr in mates}
         specific = {hr: [(hp, net) for hp, net in pins if net not in self.plane] for hr, pins in shared.items()}
         specific = {hr: pins for hr, pins in specific.items() if pins}
         if specific:
@@ -813,6 +976,8 @@ class Placer:
             tier = (4 if a >= L.BIG_AREA else 2) if kind(host) != "passive" else 1
             if (self.is_esd(ref) and kind(host) == "conn") or prefix(ref) == "Y":
                 tier = 6                                           # ESD and crystals first of all: a connector's signal pins, an IC's oscillator pins are theirs
+            if waiting and tier < 6:
+                tier = 0
             return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 1 else 0, scores[host])
         # only planes shared (a decoupling or bulk capacitor, or a part waiting for its partner): among the parts
         # on its rail, the one the schematic drew it beside, on the same sheet, an IC counting as nearer than a
@@ -837,7 +1002,10 @@ class Placer:
         def resolve():
             hp = cand[self.used_pins[(host, rail)] % len(cand)]; self.used_pins[(host, rail)] += 1
             p = self.fps[host].FindPadByNumber(hp).GetPosition(); return (p.x / 1e6, p.y / 1e6)
-        waiting = self.has_specific(ref)
+        if isl:                                                    # drawn beside an IC of its island that is not down yet: it waits for it
+            drawn_by = min((r for r in self.islands[isl][1] if r in self.fps and kind(r) == "ic"), key=sch_dist, default=None)
+            waiting = waiting or (drawn_by is not None and drawn_by not in self.side)
+        waiting = waiting or self.has_specific(ref)
         a = self.area[ref]
         tier = 0 if waiting else 5 if a < L.SMALL_AREA else 3      # small decoupling first of all; bulk after the big parts on the pins
         return host, resolve, rail, (tier, a if tier > 0 else 0, scores[host])
@@ -1306,6 +1474,23 @@ def main(directives=None, out=None, project=None, house_fp=None):
         f.write("part   host   side  where (side+ring, or free@distance from the pin)\n")
         for ref, host, layer, how in P.order:
             f.write(f"{ref:6s} {host:6s} {layer:5s} {how}\n")
+        f.write(f"\nislands (layout.md 3.1): the schematic's islands with two or more parts, connectors and holes aside; the spread is the\n"
+                f"farthest member from the island's centre on the board, and members more than {L.ISLAND_SPREAD:g} mm out are listed\n")
+        apart = []
+        hostof = {ref: host for ref, host, _, _ in P.order}
+        def follows_island(r):                                     # connectors, holes and ESD at a connector (3.8) are not held to their island
+            return r in P.fps and kind(r) != "conn" and r not in L.HOLES and not (P.is_esd(r) and kind(hostof.get(r) or r) == "conn")
+        for iid, (sheet, refs, _) in P.islands.items():
+            members = [r for r in refs if follows_island(r)]
+            if len(members) < 2:
+                continue
+            pts = {r: (P.fps[r].GetPosition().x / 1e6, P.fps[r].GetPosition().y / 1e6) for r in members}
+            cx = sorted(x for x, _ in pts.values())[len(pts) // 2]; cy = sorted(y for _, y in pts.values())[len(pts) // 2]
+            dist = {r: math.hypot(x - cx, y - cy) for r, (x, y) in pts.items()}
+            far = sorted((r for r in members if dist[r] > L.ISLAND_SPREAD), key=natural); apart += far
+            f.write(f"{iid:26s} {len(members):3d} parts  spread {max(dist.values()):5.1f} mm" + (f"  apart: {' '.join(f'{r}@{dist[r]:.0f}' for r in far)}" if far else "") + "\n")
+    n_isl = sum(1 for _, (s, refs, _) in P.islands.items() if sum(1 for r in refs if follows_island(r)) >= 2)
+    print(f"islands: {n_isl} with two or more parts; parts placed apart from their island (> {L.ISLAND_SPREAD:g} mm): {' '.join(sorted(set(apart), key=natural)) or '-'}")
     majors_omitted = [r for r in omitted if kind(r) != 'passive']
     print(f"silkscreen: {len(fps) - len(L.HOLES) - len(omitted)} designators placed, {len(omitted)} omitted "
           f"({sum(1 for r in omitted if P.side[r] == 'B')} on the bottom)"

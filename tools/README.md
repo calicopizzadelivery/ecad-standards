@@ -65,8 +65,12 @@ width and gap, matched in length, and the lane is refused if the P member
 would cross the N member between its ends (the array's channels then swap
 in the schematic, layout.md 3.8). Tunables: `ESCAPE_WIDTH`, `ESCAPE_LENGTH`,
 `THT_STUB`, `DIRECT_STUB`, `CHAMFER`, `VIA_PAIR_OFFSET`, `BRIDGE_DEPTHS`,
-`MATCH_TOLERANCE`, `BUMP_HEIGHT`, `BUMP_WIDTH`. Read by `copper.py` rather
-than the placer: `FLOODS`, `STITCH`, `STITCH_VIA`.
+`MATCH_TOLERANCE`, `BUMP_HEIGHT`, `BUMP_WIDTH`, `ISLAND_GAP` (6.0: symbol
+bodies closer than this on the sheet are one island), `ISLAND_REACH` (25.0:
+a wire joins two symbols into an island only while their bodies are within
+this), `ISLAND_SPREAD` (15.0: a member farther than this from its island's
+centre on the board is reported). Read by `copper.py` rather than the
+placer: `FLOODS`, `STITCH`, `STITCH_VIA`.
 
 `PLANES` entries take an optional fifth item, the zone priority, so rail
 regions on one layer carve a base plane under them.

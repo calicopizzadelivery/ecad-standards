@@ -144,13 +144,23 @@ honoured exactly and the start is reproducible:
    every other lane; it checks that the P member leaves one end on the same
    side it arrives at the other, and refuses the lane otherwise, since a
    crossing is fixed in the schematic (section 3.8), not in copper.
-6. **Every other part is placed at the pin it serves.** Its host is the
-   placed part it shares the most specific nets with (two-node nets count
-   for most, planes for little, a connector or an IC for more than a
-   passive, current-carrying and pair classes for more still); a part whose
-   nets are all planes (a decoupling or bulk capacitor) belongs to the IC
-   the schematic draws it beside, at that IC's next free pin on the rail, a
-   capacitor never to another capacitor. The attachment point is the host's
+6. **Every other part is placed at the pin it serves, with its island.**
+   The islands are read from the sheets (3.1): symbols whose bodies, grown
+   by 3 mm, touch, or that a wire joins while their bodies lie within 25 mm
+   of each other (a supply bus or a long wire across the sheet joins areas,
+   not an island; a label joins nothing), transitively, power symbols
+   aside. A part's host is the placed part it shares the most specific nets
+   with (two-node nets count for most, planes for little, a connector or an
+   IC for more than a passive, a member of its own island for more than
+   one on the same sheet, current-carrying and pair classes for more
+   still); once a member of its island that it shares a net with is placed,
+   only island members are candidates, and a member waits while its
+   island's hub is not down. An IC is never hosted by a passive while a
+   connector or an IC will do; an ESD part's connector outranks its island.
+   A part whose nets are all planes (a decoupling or bulk capacitor)
+   belongs to the IC the schematic draws it beside (waiting for it if it is
+   not down yet), at that IC's next free pin on the rail, a capacitor never
+   to another capacitor outside its own island. The attachment point is the host's
    pads on the shared nets; the part goes on the host's side nearest that
    point, a two-pin part turned so the pad on the host's net faces it, the
    parts along a side packed outward in rings (a bulk capacitor behind the
@@ -164,9 +174,12 @@ honoured exactly and the start is reproducible:
    and parts whose partner was not down yet. A part no ring can take goes
    to the nearest free spot to its pin; the generator reports every part it
    could not keep within 8 mm of its pin, and a placement report beside the
-   board file (`placement.txt`) records each part's host and ring. Those
-   far parts, and the indicator LEDs (which belong where they can be seen,
-   not at the pin that drives them), are the first hand work.
+   board file (`placement.txt`) records each part's host and ring, then
+   each island's spread on the board (the farthest member from its centre)
+   and the members placed more than 15 mm out. Those far parts, the
+   members placed apart from their island, and the indicator LEDs (which
+   belong where they can be seen, not at the pin that drives them), are the
+   first hand work.
 7. Planes are drawn as zones (the ground plane on L2, the rails as regions
    of L3 with the base rail underneath at the lowest priority, an isolated
    ground island where there is one), stopping a millimetre short of the
@@ -251,6 +264,22 @@ follows the next routing.
   power and RF are physically separate; high-speed signals do not cross
   low-speed zones; the parts of one block sit together, the block next to
   the connector it serves.
+- **The board mimics the schematic's islands.** Parts drawn together on one
+  sheet, in one area (an IC with the parts fanned out from its pins, a
+  transistor with its base and pull-down resistors, a crystal with its load
+  capacitors, a row of straps), are placed together on the board: the
+  island's hub (its member with the most pins) goes down first, at the
+  placed part it shares the most nets with, and every other member is
+  placed at a member of its own island that it shares a net with, waiting
+  for the hub rather than taking a host elsewhere. A schematic drawn by
+  [schematic-style.md](schematic-style.md) makes this the rule for free:
+  what is fanned out from a part sits by it; what leaves an island by a
+  label belongs to the island it lands in. Connectors are exempt: they sit
+  where the edge table puts them, and an island drawn around a receptacle
+  comes to the receptacle, not the other way round; an ESD part keeps its
+  connector (3.8) whatever island it is drawn in. The generator reads the
+  islands from the sheets (section 2, step 6) and reports each island's
+  spread on the board.
 
 ### 3.2 The ICs' own guidelines
 
