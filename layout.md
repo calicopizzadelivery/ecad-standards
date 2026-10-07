@@ -322,8 +322,11 @@ at COMP with the divider beyond), where the output capacitors sit relative
 to the inductor, and whether the figure keeps everything on the top side.
 The engine places the island from the template in the figure's order, the
 switching loop first, and the figure is cited, with the measured result,
-in the project's layout-guidelines document. **Guidelines without a figure
-are followed on a best-effort basis, and the effort is written down.** Before placement, each IC's datasheet layout
+in the project's layout-guidelines document. Where the datasheet has no
+layout figure but the maker's evaluation board is published, the evaluation
+board's layout is the figure (`TEMPLATED` names the IC and its template).
+**Guidelines without a figure are followed on a best-effort basis, and the
+effort is written down.** Before placement, each IC's datasheet layout
 section (and its evaluation board, as in the reference-design review) is
 read and its rules are entered in the project's layout guideline table
 (`docs/layout-guidelines.md`): the rule, its source, and how the board meets

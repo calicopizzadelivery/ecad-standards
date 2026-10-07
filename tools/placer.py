@@ -44,7 +44,7 @@ DEFAULTS = {"EDGE_ZONE": 3.0, "HOLE_CLEAR_R": 4.0, "PACK_MARGIN": 0.15, "RING_GA
             "ESD_VALUES": ("USBLC", "PESD", "ESDA", "TPD", "SRV05", "IP42", "TVS"), "FIXED": {}, "ANCHORS": {},
             "ESCAPE_WIDTH": 0.2, "ESCAPE_LENGTH": 1.2, "CHAMFER": 0.8, "VIA_PAIR_OFFSET": 0.45, "BRIDGE_DEPTHS": (0.8, 1.6), "THT_STUB": 1.0, "DIRECT_STUB": 0.4,
             "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5, "ISLAND_GAP": 6.0, "ISLAND_REACH": None, "ISLAND_SPREAD": 10.0,
-            "CITY_GAP": 2.0, "REGULATORS": {}, "LAYOUTS": {}, "COPPER_VOIDS": {}}
+            "CITY_GAP": 2.0, "REGULATORS": {}, "LAYOUTS": {}, "TEMPLATED": {}, "COPPER_VOIDS": {}}
 
 
 class Directives:
@@ -477,7 +477,10 @@ class Placer:
             if not self.reg_nets[r]["sw"]:
                 print(f"regulator {r}: no SW pin found (name it with 'sw_pin' in REGULATORS); pins by name: {sorted(by_name)}")
         self.pin_names = pin_names
-        self.layout_of = {}                               # regulator -> its datasheet layout template (layout.md 3.2)
+        self.layout_of = {}                               # IC -> its datasheet or evaluation-board layout template (layout.md 3.2)
+        for r, name in L.TEMPLATED.items():
+            if r in self.fps and name in L.LAYOUTS:
+                self.layout_of[r] = L.LAYOUTS[name]
         self.inductor_of = {}                             # regulator -> its inductor (the L on the SW net in its city)
         for r, cfg in L.REGULATORS.items():
             if r in self.fps and cfg.get("layout") in L.LAYOUTS:
@@ -1118,12 +1121,13 @@ class Placer:
             if waiting and tier < 6:
                 tier = 0
             reg = self.regulator_of.get(isl)
-            if reg and ref != reg and not waiting and tier < 6:    # a regulator's city (3.2) is placed before every other satellite
-                lay = self.layout_of.get(host)
-                hint = self.template_hint(host, ref, specific[host], lay) if lay else None
-                if hint:                                           # the datasheet's figure: its pin order, then its order along the pin
+            lay = self.layout_of.get(host)
+            if lay and host == self.hub_of.get(isl) and ref != host and not waiting and tier < 6:
+                hint = self.template_hint(host, ref, specific[host], lay)
+                if hint:                                           # the figure's city (3.2) is placed before every other satellite: its pin order, then its order along the pin
                     return host, (lambda: (x, y)), specific[host][0][1], (5.9, -hint["rank"][0], -hint["rank"][1], -a), hint
-                nets = {net for _, net in specific[host]}          # no figure: the switching loop (inductor, diode) first, then the rest at their pins
+            if reg and ref != reg and not waiting and tier < 6:    # a regulator without a figure: the switching loop (inductor, diode) first, then the rest at their pins
+                nets = {net for _, net in specific[host]}
                 tier = 5.9 if self.reg_nets[reg]["sw"] in nets else 5.6
                 return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 5.8 else -a, scores[host]), None
             return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 1 else 0, scores[host]), None
@@ -1157,13 +1161,14 @@ class Placer:
         a = self.area[ref]
         tier = 0 if waiting else 5 if a < L.SMALL_AREA else 3      # small decoupling first of all; bulk after the big parts on the pins
         reg = self.regulator_of.get(isl)
-        if reg and ref != reg and not waiting:                     # a regulator's input and output capacitors: smallest nearest the pin, before all
+        lay = self.layout_of.get(host)
+        if (reg or lay) and ref != host and not waiting:           # a figure's or a regulator's capacitors: smallest nearest the pin, before all
             hint = None
-            lay = self.layout_of.get(host)
-            if lay:                                                # the input capacitors: the figure's side for the pin on their rail
+            if lay:                                                # the figure's side for the pin on their rail
                 hint = self.template_hint(host, ref, [(hp, net) for hp, net in pins if net == rail], lay)
-            hint = hint or self.output_hint(host, rail)            # the output capacitors: the figure's place by the inductor
-            return host, resolve, rail, (5.8 if rail == self.reg_nets[reg]["in"] else 5.7, -a, scores[host]), hint
+            hint = hint or self.output_hint(host, rail)            # a regulator's output capacitors: the figure's place by the inductor
+            tier = 5.8 if (reg and rail == self.reg_nets[reg]["in"]) else 5.7
+            return host, resolve, rail, (tier, -a, scores[host]), hint
         return host, resolve, rail, (tier, a if tier > 0 else 0, scores[host]), None
 
     def orientation(self, ref, hostnet, side, layer, host=None):
