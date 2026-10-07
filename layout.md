@@ -92,10 +92,11 @@ carries a net class directive flag whose class name states the current
 
 ## 2. The board is generated, once
 
-The first board file is produced by a generator (the baseboard's
-`gen/pcb.py`, on KiCad's `pcbnew` Python module) from the schematic, the
-project file and the directives, so the directives are honoured exactly and
-the start is reproducible:
+The first board file is produced by the standard's placement engine
+([tools/placer.py](tools/placer.py), on KiCad's `pcbnew` Python module; a
+project calls it from a wrapper such as the baseboard's `gen/pcb.py`) from the
+schematic, the project file and the directives, so the directives are
+honoured exactly and the start is reproducible:
 
 1. The outline (with its corner radius), the mounting holes and the keep-out
    rule areas come straight from the directives; the stackup is written into

@@ -23,3 +23,5 @@ do not float; labels are for nets that leave the page.
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+- [tools/](tools/README.md) — the standard's implementation: `placer.py`, the placement engine a project runs over its directives, and `harvest.py`, which measures practice on reference boards
