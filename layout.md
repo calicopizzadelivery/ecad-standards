@@ -127,8 +127,18 @@ honoured exactly and the start is reproducible:
    directives give, as wide as the class's track plus its clearance plus a
    margin each side. Each becomes a footprint keep-out rule area on both
    sides, stopping at the courtyards of the parts the lane joins, and the
-   lane's copper at the class width. A lane whose leg is not axis-aligned,
-   whose pad is not on its net, or that runs through a fixed part is refused.
+   lane's copper at the class width. A lane whose pad is not on its net or
+   that runs through a fixed part is refused. **A pair lane** lays the two
+   member tracks at the class's differential width and gap along one
+   centreline, 45-degree corners, escapes from the pads at the pads' own
+   pitch (through-hole rows get a straight stub past the row first), the
+   two doubled D+/D- pads of a USB-C receptacle bridged behind the pad row
+   through staggered vias on the far side, an optional layer change as a
+   via pair (the members spread to the via pitch over a millimetre), and a
+   length-matching bump on the shorter member where it stands clear of
+   every other lane; it checks that the P member leaves one end on the same
+   side it arrives at the other, and refuses the lane otherwise, since a
+   crossing is fixed in the schematic (section 3.8), not in copper.
 6. **Every other part is placed at the pin it serves.** Its host is the
    placed part it shares the most specific nets with (two-node nets count
    for most, planes for little, a connector or an IC for more than a
@@ -152,10 +162,12 @@ honoured exactly and the start is reproducible:
    board file (`placement.txt`) records each part's host and ring. Those
    far parts, and the indicator LEDs (which belong where they can be seen,
    not at the pin that drives them), are the first hand work.
-7. Planes are drawn as zones (the ground plane on L2, an isolated ground
-   island where there is one), stopping a millimetre short of the edge, and
-   a `.kicad_dru` carries the rules the directives need (nothing but the
-   isolated classes inside the isolation area; their creepage clearance).
+7. Planes are drawn as zones (the ground plane on L2, the rails as regions
+   of L3 with the base rail underneath at the lowest priority, an isolated
+   ground island where there is one), stopping a millimetre short of the
+   edge, and a `.kicad_dru` carries the rules the directives need (nothing
+   but the isolated classes inside the isolation area; their creepage
+   clearance).
 8. The silkscreen pass of section 6 runs over the placement: every
    designator where it overlaps nothing, omitted otherwise, ICs and
    connectors stepping out to the nearest pocket rather than being omitted.
@@ -166,7 +178,13 @@ honoured exactly and the start is reproducible:
    an island, a fill in a keep-out all show. A zone outline with a hole does
    not fill in KiCad: a plane that must avoid a region is drawn as one
    outline around it.
-10. The board file is reproducible like the schematic
+10. **The rest is routed by FreeRouting** (`tools/autoroute.py`): the board
+   goes out as Specctra with every lane track and via locked (fixed) and
+   the planes as planes, FreeRouting runs headless on one thread, the
+   session comes back and the board is written in canonical order. What the
+   autorouter leaves unrouted or in violation is finished by hand in KiCad,
+   and from then on the board file is the source of truth.
+11. The board file is reproducible like the schematic
    ([kicad-generation.md](kicad-generation.md)): `pcbnew` draws random UUIDs
    and writes items in their order, so the generator sorts footprints by
    reference, graphics by content and zones by name, derives every UUID in
@@ -301,6 +319,12 @@ assembler is consulted on double-sided reflow before the first order.
   enters the array on one pin row and leaves on the other, on one layer,
   the array turned so its connector-side pins face the connector and its
   IC-side pins face the IC, the array on the straight path between them.
+  Which channel of the array carries D+ is a layout fact: with the array's
+  connector-side pins toward the receptacle, the pair crosses itself unless
+  the channel on the receptacle's D+ side carries D+. The schematic is drawn
+  to that (the house library's USBLC6-2SC6-IO2up draws the array with its
+  I/O2 row on top for the case where D- lies on the I/O2 end), and the
+  generator's crossing check says which arrays need it.
   The two nets a flow-through array creates (connector side, IC side) are
   both named as a pair and both in the pair's class, so the segment through
   the array is routed at the pair's impedance; the generator refuses a
@@ -353,6 +377,11 @@ assembler is consulted on double-sided reflow before the first order.
   layer is unavoidable, makes it once, both tracks together, with a ground
   via beside the pair at the change. A pair class whose width and gap are
   KiCad's defaults is not a pair class; the numbers come from the stackup.
+  A USB-C receptacle's doubled D+/D- pads (A6/B6, A7/B7, interleaved along
+  the row) cannot both be joined on the receptacle's layer without a
+  crossing: the pair leaves from two adjacent pads and the other two are
+  bridged behind the row through vias on the far side, as the reference
+  boards do, the vias staggered so no stub comes within clearance.
 - **Signal tracks** are 0.2 mm wide at 0.15 mm clearance by default (the
   net class the generator writes), down to the fab's minimum where a pitch
   demands it; vias 0.6 mm on a 0.3 mm drill, through-hole only, no blind or
@@ -439,14 +468,17 @@ directives before the next starts.
 3. **The pairs.** Controlled-impedance pairs are placed and routed before
    anything else inboard: receptacle, ESD array and controller in a line,
    the pair on the top layer over the unbroken ground plane, no stubs,
-   lengths matched.
+   lengths matched. The generator lays them from the directives' pair lanes
+   (section 2) and reports each pair's lengths, mismatch and layer changes.
 4. **Power.** Inlet to rails, left to right: the PD stage at its connector,
    the switching regulators with their loops tight and their thermal copper,
    the high-current polygons with their via arrays, then the rails to each
    block as polygons.
 5. **Everything else**, block by block, each block's decoupling against its
    pins before its signals leave it. Crystals last within their block, with
-   nothing routed under them.
+   nothing routed under them. The autorouter does this pass over the locked
+   lanes and the planes (section 2, step 10); the hand pass finishes what it
+   leaves and adds the ground stitching of section 5.
 6. **Silkscreen and fabrication**: section 6, then the stackup and
    controlled-impedance notes in the fab drawing.
 

@@ -41,6 +41,45 @@ outline)`, single outlines, notched rather than holed), `CURRENT_CLASSES`,
 `ESD_VALUES`. The baseboard's `hardware/kicad/gen/layout.py` is the worked
 example, and its `docs/layout-directives.md` the prose the module encodes.
 
+### Lanes
+
+`LANES` is a dict of corridors. A single-net lane:
+
+    "PSU_VP": {"net": "PSU_VP", "layer": "F.Cu", "width": 2.0,     # width optional: the class's
+               "path": [("J18", "1"), ("y", 65.0), ("x", ("K803", "6")), ("K803", "6")]}
+
+`path` items: a pad `(ref, number)`; a leg `("x", value)` or `("y", value)`
+moving along one axis to a coordinate or to another pad's coordinate; a
+layer change `("layer", "B.Cu")` at the current point (a via). A pair lane:
+
+    "HUB_DN4": {"pair": "HUB_DN4", "path": [("U408", {"P": "1", "N": "3"}), ("y", 50.0),
+                ("x", ("U402", {"P": "9", "N": "8"})), ("U402", {"P": "9", "N": "8"})]}
+
+names the nets `<pair>_P` / `<pair>_N`; an end is `(ref, {"P": pad, "N": pad})`,
+or `("pads", {"P": (ref, pad), "N": (ref, pad)})` for two parts (series
+resistors), or with pad lists for a receptacle's doubled pads
+(`{"P": ["A6", "B6"], "N": ["A7", "B7"]}`, bridged behind the row); an end
+may carry a shift of its centreline, `(ref, {...}, (dx, dy))`, where two
+pairs leave adjacent pins. The members are laid at the class's differential
+width and gap, matched in length, and the lane is refused if the P member
+would cross the N member between its ends (the array's channels then swap
+in the schematic, layout.md 3.8). Tunables: `ESCAPE_WIDTH`, `ESCAPE_LENGTH`,
+`THT_STUB`, `DIRECT_STUB`, `CHAMFER`, `VIA_PAIR_OFFSET`, `BRIDGE_DEPTHS`,
+`MATCH_TOLERANCE`, `BUMP_HEIGHT`, `BUMP_WIDTH`.
+
+`PLANES` entries take an optional fifth item, the zone priority, so rail
+regions on one layer carve a base plane under them.
+
+## autoroute.py: the rest of the routing (layout.md section 2, step 10)
+
+    tools/autoroute.py OUT_DIR/PROJECT.kicad_pcb /path/to/freerouting [--passes 30] [--threads 1]
+
+exports the board to Specctra (locked tracks and vias fixed, planes as
+planes), runs FreeRouting headless, imports the session and writes the board
+in canonical order. One thread on purpose: FreeRouting's multi-threaded
+optimiser produces clearance violations. Run it once after the placer; the
+board file is the source of truth from then on.
+
 ## harvest.py: measured practice (layout.md section 9)
 
     tools/harvest.py --mirror reference-boards/ --board OUT_DIR/PROJECT.kicad_pcb --csv docs/reference-boards.csv

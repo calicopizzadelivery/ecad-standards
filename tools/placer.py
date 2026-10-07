@@ -41,7 +41,9 @@ DEFAULTS = {"EDGE_ZONE": 3.0, "HOLE_CLEAR_R": 4.0, "PACK_MARGIN": 0.15, "RING_GA
             "LANES": {}, "LANE_MARGIN": 0.25, "ISOLATION_REGIONS": [], "PLANES": [],
             "CURRENT_CLASSES": set(), "PAIR_CLASSES": set(), "BOTTOM_MAX_AREA": {"R": 7.0, "C": 7.0, "D": 8.0, "Q": 12.0},
             "BOTTOM_NEVER_CLASSES": set(), "BOTTOM_TUCK": 1.75, "THT_MARGIN": 0.5, "EP_MARGIN": 0.6, "REFDES_SIZES": (0.8, 0.7),
-            "ESD_VALUES": ("USBLC", "PESD", "ESDA", "TPD", "SRV05", "IP42", "TVS"), "FIXED": {}, "ANCHORS": {}}
+            "ESD_VALUES": ("USBLC", "PESD", "ESDA", "TPD", "SRV05", "IP42", "TVS"), "FIXED": {}, "ANCHORS": {},
+            "ESCAPE_WIDTH": 0.2, "ESCAPE_LENGTH": 1.2, "CHAMFER": 0.8, "VIA_PAIR_OFFSET": 0.45, "BRIDGE_DEPTHS": (0.8, 1.6), "THT_STUB": 1.0, "DIRECT_STUB": 0.4,
+            "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5}
 
 
 class Directives:
@@ -79,6 +81,13 @@ def class_geometry():
     """{class: (track width, clearance)} from the project file the schematic build wrote."""
     pro = json.load(open(os.path.join(OUT, f"{PROJECT}.kicad_pro"), encoding="utf-8"))
     return {c["name"]: (c["track_width"], c["clearance"]) for c in pro["net_settings"]["classes"]}
+
+
+def class_pairs_and_vias():
+    """{class: (diff pair width, gap)} and {class: (via diameter, drill)} from the project file."""
+    pro = json.load(open(os.path.join(OUT, f"{PROJECT}.kicad_pro"), encoding="utf-8"))
+    cl = pro["net_settings"]["classes"]
+    return ({c["name"]: (c["diff_pair_width"], c["diff_pair_gap"]) for c in cl}, {c["name"]: (c["via_diameter"], c["via_drill"]) for c in cl})
 
 
 def sch_positions():
@@ -161,6 +170,55 @@ def prefix(ref):
     return re.match(r"[A-Z]+", ref).group(0)
 
 
+def unit(a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]; l = math.hypot(dx, dy) or 1.0
+    return (dx / l, dy / l)
+
+
+def nplus(d):
+    """The '+' side of a direction: sign(cross(d, q)) > 0 for q on this side (y down on screen)."""
+    return (-d[1], d[0])
+
+
+def cross(d, q):
+    return d[0] * q[1] - d[1] * q[0]
+
+
+def offset_polyline(pts, offs):
+    """Offset a polyline by a per-vertex distance along its '+' normal (mitred joins)."""
+    out = []
+    for i, p in enumerate(pts):
+        if len(pts) == 1:
+            return [p]
+        d1 = unit(pts[i - 1], p) if i > 0 else unit(p, pts[i + 1])
+        d2 = unit(p, pts[i + 1]) if i < len(pts) - 1 else d1
+        n1, n2 = nplus(d1), nplus(d2)
+        dot = 1 + n1[0] * n2[0] + n1[1] * n2[1]
+        if dot < 0.3:                                                # a reversal: no mitre
+            n = n1; k = 1.0
+        else:
+            n = (n1[0] + n2[0], n1[1] + n2[1]); k = 1.0 / dot
+        out.append((p[0] + offs[i] * n[0] * k, p[1] + offs[i] * n[1] * k))
+    return out
+
+
+def chamfer(pts, c):
+    """Replace each 90-degree corner of an axis-aligned polyline by a 45-degree cut c long."""
+    if len(pts) < 3:
+        return list(pts)
+    out = [pts[0]]
+    for i in range(1, len(pts) - 1):
+        a, p, b = pts[i - 1], pts[i], pts[i + 1]
+        la, lb = math.hypot(p[0] - a[0], p[1] - a[1]), math.hypot(b[0] - p[0], b[1] - p[1])
+        cc = min(c, la / 2, lb / 2)
+        if cc < 0.2:
+            out.append(p); continue
+        da, db = unit(a, p), unit(p, b)
+        out.append((p[0] - da[0] * cc, p[1] - da[1] * cc)); out.append((p[0] + db[0] * cc, p[1] + db[1] * cc))
+    out.append(pts[-1])
+    return out
+
+
 def kind(ref):
     p = prefix(ref)
     return "conn" if p == "J" else "ic" if p in ("U", "K") else "passive"
@@ -172,6 +230,7 @@ class Placer:
     def __init__(self, board, fps, nets, classes, pad_net, schpos, geometry):
         self.board, self.fps, self.nets, self.pad_net, self.schpos = board, fps, nets, pad_net, schpos
         self.classes, self.geometry = classes, geometry
+        self.pair_geometry, self.via_geometry = class_pairs_and_vias()
         self.weight = {n: (5.0 if c in L.CURRENT_CLASSES else 2.0 if c in L.PAIR_CLASSES else 1.0) for n, c in classes.items()}
         self.area = {ref: (lambda b: (b[2] - b[0]) * (b[3] - b[1]))(bbox_mm(fp)) for ref, fp in fps.items()}
         self.values = {ref: fp.GetValue() for ref, fp in fps.items()}
@@ -183,6 +242,9 @@ class Placer:
         self.under = {}                                   # a top part -> the boxes it denies the bottom (THT pads, EP via field, a crystal)
         self.lanes = []                                   # (name, box) corridors kept free of parts on both sides
         self.tracks = []                                  # (net, layer, width, p0, p1) the lanes' copper
+        self.vias = []                                    # (net, x, y, diameter, drill) the lanes' vias
+        self.lane_report = []                             # one line per lane: lengths, mismatch, crossings
+        self.pairs_laid = []                              # (name, netP, netN, sP, first track index, last) for the length matching
         self.fixed = set()
         self.locked = []                                  # the connectors' boxes: nothing within 0.3 mm on top
         self.rings = collections.defaultdict(list)        # (host, side, layer) -> [{depth, members: [(ref, interval)]}]
@@ -330,51 +392,398 @@ class Placer:
     def pad_xy(self, ref, num):
         p = self.fps[ref].FindPadByNumber(num).GetPosition(); return (p.x / 1e6, p.y / 1e6)
 
+    def pad_geom(self, ref, num):
+        """(centre, half-length along the pad's long axis, that axis as a unit vector, is-through-hole) of a pad."""
+        p = self.fps[ref].FindPadByNumber(num)
+        if p is None:
+            raise SystemExit(f"{ref} has no pad {num}")
+        c = (p.GetPosition().x / 1e6, p.GetPosition().y / 1e6)
+        sx, sy = p.GetSizeX() / 1e6, p.GetSizeY() / 1e6
+        rot = math.radians(p.GetOrientationDegrees()) if hasattr(p, "GetOrientationDegrees") else math.radians(p.GetOrientation().AsDegrees())
+        ax = (math.cos(rot), -math.sin(rot)) if sx >= sy else (math.sin(rot), math.cos(rot))
+        return c, max(sx, sy) / 2, ax, p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH)
+
+    def pad_tip(self, ref, num, d):
+        """Where a track leaves a pad travelling in direction d: the finger's end for an SMD pad, the centre for a hole."""
+        c, half, ax, tht = self.pad_geom(ref, num)
+        if tht:
+            return c
+        s = ax[0] * d[0] + ax[1] * d[1]
+        if abs(s) < 0.5:                                               # leaving across the finger: from its centre
+            return c
+        k = half - 0.1 if s > 0 else -(half - 0.1)
+        return (c[0] + ax[0] * k, c[1] + ax[1] * k)
+
     def resolve_lanes(self):
-        """The lanes' legs from the directives: their tracks, and the corridors kept free of parts (which stop at
-        the courtyards of the parts the lane joins)."""
-        problems = []
+        """The lanes from the directives: corridors kept free of parts (stopping at the parts a lane joins), the
+        tracks laid at the class width, a single-net lane's layer changes, and the differential pairs' two
+        member tracks with their escapes, bridges, corners and the crossing check."""
+        self.lane_problems = []
         for name, lane in L.LANES.items():
-            net = self.net_named(lane["net"])
-            track, clear = self.geometry.get(self.classes.get(net, "Default"), self.geometry["Default"])
-            hw = track / 2 + clear + L.LANE_MARGIN
-            pts, ends = [], []
-            for item in lane["path"]:
-                if item[0] in ("x", "y"):
-                    val = self.pad_xy(*item[1]) if isinstance(item[1], tuple) else (item[1], item[1])
-                    px, py = pts[-1]
-                    pts.append((val[0], py) if item[0] == "x" else (px, val[1]))
-                elif isinstance(item[0], str):
-                    if self.pad_net.get(item) != net:
-                        problems.append(f"lane {name}: pad {item} is not on {net}")
-                    pts.append(self.pad_xy(*item)); ends.append(item[0])
+            try:
+                if "pair" in lane:
+                    self.lay_pair(name, lane)
                 else:
-                    pts.append(tuple(item))
-            for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-                if abs(x0 - x1) > 1e-6 and abs(y0 - y1) > 1e-6:
-                    problems.append(f"lane {name}: the leg {x0, y0} to {x1, y1} is not axis-aligned"); continue
-                self.tracks.append((net, lane["layer"], track, (x0, y0), (x1, y1)))
-                box = [min(x0, x1) - hw, min(y0, y1) - hw, max(x0, x1) + hw, max(y0, y1) + hw]
-                horizontal = abs(y0 - y1) < 1e-6
-                for ref in ends:                                   # the keep-out stops at the parts the lane joins
-                    cb = self.box_of(ref)
-                    if not overlap(tuple(box), cb):
-                        continue
-                    lo, hi = (0, 2) if horizontal else (1, 3)
-                    if cb[lo] <= box[lo] and cb[hi] >= box[hi]:
-                        box = None; break
-                    if cb[lo] <= box[lo]:
-                        box[lo] = cb[hi]
-                    elif cb[hi] >= box[hi]:
-                        box[hi] = cb[lo]
-                if box and box[2] - box[0] > 0.1 and box[3] - box[1] > 0.1:
-                    self.lanes.append((name, tuple(box)))
+                    self.lay_single(name, lane)
+            except SystemExit as e:
+                self.lane_problems.append(str(e))
         for name, box in self.lanes:                                # nothing fixed but the lane's ends may stand in it
+            ends = set()
+            for lane in L.LANES.values():
+                for item in lane["path"]:
+                    if item[0] == "pads":
+                        ends.update(r for r, _ in item[1].values())
+                    elif isinstance(item[0], str) and item[0] not in ("x", "y", "layer") and item[0] in self.fps:
+                        ends.add(item[0])
             for ref in self.fixed:
-                if ref not in L.HOLES and overlap(box, self.boxes["F"][ref]) and ref not in {e for lane in L.LANES.values() for e in (lane["path"][0][0], lane["path"][-1][0])}:
-                    problems.append(f"lane {name} runs through {ref}")
-        if problems:
-            raise SystemExit("the directives' lanes are not consistent:\n  " + "\n  ".join(problems))
+                if ref not in L.HOLES and ref not in ends and overlap(box, self.boxes["F"][ref]):
+                    self.lane_problems.append(f"lane {name} runs through {ref}")
+        if self.lane_problems:
+            raise SystemExit("the directives' lanes are not consistent:\n  " + "\n  ".join(self.lane_problems))
+        self.match_lengths()
+
+    def match_lengths(self):
+        """Every pair's members matched within the tolerance: a bump on the shorter member's longest straight run,
+        on its outer side, where it stands clear of every lane and fixed part (layout.md 5)."""
+        for name, netP, netN, sP, i0, i1 in self.pairs_laid:
+            mine = [(i, tr) for i, tr in enumerate(self.tracks) if i0 <= i < i1]
+            def length(net):
+                return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for i, (n, l, ww, a, b) in mine if n == net)
+            delta = length(netP) - length(netN)
+            note = ""
+            if abs(delta) > L.MATCH_TOLERANCE:
+                short, sign = (netN, -sP) if delta > 0 else (netP, sP)
+                cands = [(i, tr) for i, tr in mine if tr[0] == short and (abs(tr[3][0] - tr[4][0]) < 1e-6 or abs(tr[3][1] - tr[4][1]) < 1e-6)
+                         and math.hypot(tr[4][0] - tr[3][0], tr[4][1] - tr[3][1]) > L.BUMP_WIDTH + 2.0]
+                others = [bx for nm, bx in self.lanes if not nm.startswith(name)] + [bx for r, bx in self.boxes["F"].items() if r in self.fixed]
+                placed = False
+                for i, (net, lay, ww, a, b) in sorted(cands, key=lambda it: -math.hypot(it[1][4][0] - it[1][3][0], it[1][4][1] - it[1][3][1])):
+                    d = unit(a, b); n = nplus(d); h = min(abs(delta) / 2, L.BUMP_HEIGHT); s = L.BUMP_WIDTH
+                    mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+                    p1 = (mid[0] - d[0] * s / 2, mid[1] - d[1] * s / 2); p2 = (mid[0] + d[0] * s / 2, mid[1] + d[1] * s / 2)
+                    q1 = (p1[0] + n[0] * h * sign, p1[1] + n[1] * h * sign); q2 = (p2[0] + n[0] * h * sign, p2[1] + n[1] * h * sign)
+                    bb = (min(q1[0], q2[0], p1[0], p2[0]) - ww, min(q1[1], q2[1], p1[1], p2[1]) - ww, max(q1[0], q2[0], p1[0], p2[0]) + ww, max(q1[1], q2[1], p1[1], p2[1]) + ww)
+                    if any(overlap(bb, o, 0.2) for o in others) or bb[0] < L.EDGE_ZONE or bb[1] < L.EDGE_ZONE or bb[2] > W - L.EDGE_ZONE or bb[3] > H - L.EDGE_ZONE:
+                        continue
+                    self.tracks[i:i + 1] = [(net, lay, ww, a, p1), (net, lay, ww, p1, q1), (net, lay, ww, q1, q2), (net, lay, ww, q2, p2), (net, lay, ww, p2, b)]
+                    self.lanes.append((name + "_bump", bb)); placed = True
+                    for j, (nm, nP, nN, sg, a0, a1) in enumerate(self.pairs_laid):   # the indices after the bump shift by four
+                        if a0 > i: self.pairs_laid[j] = (nm, nP, nN, sg, a0 + 4, a1 + 4)
+                        elif a1 > i: self.pairs_laid[j] = (nm, nP, nN, sg, a0, a1 + 4)
+                    mine = [(i, tr) for i, tr in enumerate(self.tracks) if i0 <= i < i1 + 4]
+                    break
+                if not placed:
+                    note = f", no room for a {abs(delta):.2f} mm bump"
+            lp, ln = length(netP), length(netN)
+            changes, crossing = self.lane_meta.get(name, (0, False))
+            self.lane_report.append(f"{name}: P {lp:.1f} mm, N {ln:.1f} mm, mismatch {abs(lp - ln):.2f} mm, {changes} layer change(s)" + note + (" CROSSING" if crossing else ""))
+
+    def class_of(self, net):
+        track, clear = self.geometry.get(self.classes.get(net, "Default"), self.geometry["Default"])
+        return track, clear
+
+    def corridor(self, name, a, b, hw):
+        """A leg's keep-out box, clipped where it enters the courtyard of a part the lane joins (handled by the caller)."""
+        box = (min(a[0], b[0]) - hw, min(a[1], b[1]) - hw, max(a[0], b[0]) + hw, max(a[1], b[1]) + hw)
+        self.lanes.append((name, box))
+
+    def walk(self, lane, ends_pads):
+        """The centreline of a lane from its path items: points, the layer of each leg, and the end directions.
+        ends_pads: callable(item) -> the point an end item stands for."""
+        pts, layers, switches, layer = [], [], [], lane.get("layer", "F.Cu")
+        for item in lane["path"]:
+            if item[0] == "layer":
+                switches.append((len(pts) - 1, layer, item[1])); layer = item[1]; continue
+            if item[0] in ("x", "y"):
+                val = item[1]
+                if isinstance(val, tuple):
+                    val = ends_pads(val)[0 if item[0] == "x" else 1]
+                px, py = pts[-1]
+                pts.append((val, py) if item[0] == "x" else (px, val))
+            else:
+                pts.append(ends_pads(item))
+            layers.append(layer)
+        return pts, layers, switches                           # a diagonal leg is allowed: its corridor is its bounding box
+
+    def lay_single(self, name, lane):
+        net = self.net_named(lane["net"])
+        track, clear = self.class_of(net)
+        width = lane.get("width", track)
+        hw = width / 2 + clear + L.LANE_MARGIN
+        def end_pt(item):
+            if self.pad_net.get(item) != net:
+                raise SystemExit(f"lane {name}: pad {item} is not on {net}")
+            return self.pad_geom(*item)[0]
+        pts, layers, switches = self.walk(lane, end_pt)
+        ends = [item[0] for item in lane["path"] if item[0] not in ("x", "y", "layer")]
+        layer = lane.get("layer", "F.Cu")
+        for i, ((x0, y0), (x1, y1)) in enumerate(zip(pts, pts[1:])):
+            for k, old, new in switches:
+                if k == i:
+                    layer = new; self.add_via(net, (x0, y0))
+            self.tracks.append((net, layer, width, (x0, y0), (x1, y1)))
+            self.add_corridor(name, (x0, y0), (x1, y1), hw, ends)
+        self.lane_report.append(f"{name}: {net.split('/')[-1]} {sum(math.hypot(b[0]-a[0], b[1]-a[1]) for a, b in zip(pts, pts[1:])):.1f} mm, {len(switches)} layer change(s)")
+
+    def add_corridor(self, name, a, b, hw, ends):
+        box = [min(a[0], b[0]) - hw, min(a[1], b[1]) - hw, max(a[0], b[0]) + hw, max(a[1], b[1]) + hw]
+        horizontal = abs(a[1] - b[1]) < 1e-6
+        for ref in ends:
+            cb = self.box_of(ref)
+            if not cb or not overlap(tuple(box), cb):
+                continue
+            lo, hi = (0, 2) if horizontal else (1, 3)
+            if cb[lo] <= box[lo] and cb[hi] >= box[hi]:
+                return
+            if cb[lo] <= box[lo]:
+                box[lo] = cb[hi]
+            elif cb[hi] >= box[hi]:
+                box[hi] = cb[lo]
+            else:                                                      # the part stands inside the leg's span: keep the far side
+                end_near_hi = abs(b[lo // 2] - cb[hi]) < abs(b[lo // 2] - cb[lo]) if False else ((b[0] if horizontal else b[1]) >= (cb[lo] + cb[hi]) / 2)
+                if end_near_hi:
+                    box[hi] = cb[lo]
+                else:
+                    box[lo] = cb[hi]
+        if box[2] - box[0] > 0.1 and box[3] - box[1] > 0.1:
+            self.lanes.append((name, tuple(box)))
+
+    def add_via(self, net, p, size=None):
+        track, clear = self.class_of(net)
+        cls = self.classes.get(net, "Default")
+        dia, drill = self.via_geometry.get(cls, self.via_geometry.get("Default", (0.6, 0.3)))
+        self.vias.append((net, p[0], p[1], dia, drill))
+        return dia
+
+    def lay_pair(self, name, lane):
+        """A differential pair along the lane: the two member tracks at the class width and gap, escapes from the
+        pads at the pads' own pitch, bridges for a receptacle's doubled pads, one optional layer change, and the
+        check that the P side is the same at both ends (else the schematic swaps the array's channels)."""
+        base = lane["pair"]
+        netP, netN = self.net_named(base + "_P"), self.net_named(base + "_N")
+        track, clear = self.class_of(netP)
+        gap = self.pair_geometry.get(self.classes.get(netP, "Default"), (track, clear))[1]
+        w = self.pair_geometry.get(self.classes.get(netP, "Default"), (track, clear))[0]
+        off = (w + gap) / 2
+        hw = off + w / 2 + clear + L.LANE_MARGIN
+        esc_w = min(w, L.ESCAPE_WIDTH)
+        items = lane["path"]
+        end_items = [it for it in items if it[0] not in ("x", "y", "layer")]
+        if len(end_items) != 2:
+            raise SystemExit(f"lane {name}: a pair lane has exactly two ends")
+        # each end: the P and N pads (a list means doubled pads: members chosen below, the rest bridged)
+        def pads_of_end(item):
+            """-> {side: [(ref, pad), ...]}: an end is (ref, {"P": pad(s), "N": pad(s)}) or ("pads", {"P": (ref, pad), "N": (ref, pad)})."""
+            ref, spec = item[0], item[1]
+            out = {}
+            for side in ("P", "N"):
+                v = spec[side]
+                if ref == "pads":
+                    pairs = [tuple(v)]
+                else:
+                    pairs = [(ref, n) for n in (v if isinstance(v, (list, tuple)) else [v])]
+                for r, n in pairs:
+                    want = netP if side == "P" else netN
+                    if self.pad_net.get((r, n)) != want:
+                        raise SystemExit(f"lane {name}: {r} pad {n} is not on {want}")
+                out[side] = pairs
+            return out
+        def end_mid(item):
+            spec = pads_of_end(item)
+            cs = [self.pad_geom(r, n)[0] for side in ("P", "N") for r, n in spec[side]]
+            shift = item[2] if len(item) > 2 else (0.0, 0.0)
+            return (sum(c[0] for c in cs) / len(cs) + shift[0], sum(c[1] for c in cs) / len(cs) + shift[1])
+        pts, layers, switches = self.walk(lane, end_mid)
+        if len(pts) < 2:
+            raise SystemExit(f"lane {name}: needs at least one leg")
+        d0 = unit(pts[0], pts[1]); d1 = unit(pts[-2], pts[-1])
+        # members at each end, and the P side at the start
+        spec0 = pads_of_end(end_items[0]); spec1 = pads_of_end(end_items[1])
+        ref0 = end_items[0][0] if end_items[0][0] != "pads" else None; ref1 = end_items[1][0] if end_items[1][0] != "pads" else None
+        def side_of(m, d):                                            # the P member's side of the members' own midpoint
+            mx, my = (m["P"][0] + m["N"][0]) / 2, (m["P"][1] + m["N"][1]) / 2
+            return 1 if cross(d, (m["P"][0] - mx, m["P"][1] - my)) >= 0 else -1
+        doubled0 = len(spec0["P"]) > 1; doubled1 = len(spec1["P"]) > 1
+        if doubled0 and not doubled1:                                  # a receptacle's members follow the fixed end
+            m1, bridges1 = self.choose_members(spec1, (-d1[0], -d1[1]), pts[-1], None, netP, netN)
+            m0, bridges0 = self.choose_members(spec0, d0, pts[0], side_of(m1, d1), netP, netN)
+        else:
+            m0, bridges0 = self.choose_members(spec0, d0, pts[0], None, netP, netN)
+            m1, bridges1 = self.choose_members(spec1, (-d1[0], -d1[1]), pts[-1], side_of(m0, d0), netP, netN)
+        sP = side_of(m0, d0)
+        s1 = side_of(m1, d1)
+        crossing = (s1 != sP)
+        # the body: from the escape point after the first end to the one before the last, chamfered, offset
+        E = L.ESCAPE_LENGTH
+        def depth_fix(m, d, p0, layer):
+            """Escape geometry at one end: the tips to escape from (after any straight stub to a common depth) and the
+            depth the body starts at, measured from the centreline point p0 along d."""
+            tips = {}
+            depths = {}
+            for side in ("P", "N"):
+                tip = self.pad_tip(*m[side + "pad"], d); tips[side] = tip
+                depths[side] = (tip[0] - p0[0]) * d[0] + (tip[1] - p0[1]) * d[1]
+            deep = max(depths.values())
+            tht = any(self.pad_geom(*m[side + "pad"])[3] for side in ("P", "N"))
+            if tht:
+                deep += L.THT_STUB                                     # a row of holes: run straight past the row's other pins first
+            for side in ("P", "N"):
+                if deep - depths[side] > 0.3:                          # a stub straight along d to the common depth
+                    tip = tips[side]; far = (tip[0] + d[0] * (deep - depths[side]), tip[1] + d[1] * (deep - depths[side]))
+                    self.tracks.append((netP if side == "P" else netN, layer, esc_w, tip, far)); tips[side] = far
+            return tips, deep + E
+        tips0, dep0 = depth_fix(m0, d0, pts[0], layers[0]); tips1, dep1 = depth_fix(m1, (-d1[0], -d1[1]), pts[-1], layers[-1])
+        leg0 = math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]); leg1 = math.hypot(pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1])
+        body = [(pts[0][0] + d0[0] * dep0, pts[0][1] + d0[1] * dep0)] + pts[1:-1] + [(pts[-1][0] - d1[0] * dep1, pts[-1][1] - d1[1] * dep1)]
+        total = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:]))
+        if total < dep0 + dep1 + 1.0:                                 # too short for a body: pad to pad at the escape width
+            for side, net in (("P", netP), ("N", netN)):
+                a = tips0[side]; b = tips1[side]
+                a2 = (a[0] + d0[0] * L.DIRECT_STUB, a[1] + d0[1] * L.DIRECT_STUB); b2 = (b[0] - d1[0] * L.DIRECT_STUB, b[1] - d1[1] * L.DIRECT_STUB)
+                self.tracks.append((net, layers[0], esc_w, a, a2)); self.tracks.append((net, layers[0], esc_w, a2, b2)); self.tracks.append((net, layers[0], esc_w, b2, b))
+            self.bridge(name, bridges0, netP, netN, d0, layers[0]); self.bridge(name, bridges1, netP, netN, (-d1[0], -d1[1]), layers[-1])
+            self.lane_report.append(f"{name}: direct {total:.1f} mm" + (" CROSSING" if crossing else ""))
+            if crossing:
+                self.lane_problems.append(f"lane {name}: the P and N pads are on opposite sides at its two ends; swap the array's channels in the schematic")
+            return
+        change_at = {k: new for k, old, new in switches}             # body index -> new layer (body[i] is pts[i] for inner points)
+        VIA = L.VIA_PAIR_OFFSET
+        chunks, cur_pts, cur_offs, cur_fix = [], [], [], {}           # per layer: points, offsets, and vertices pinned to via points
+        layer = lane.get("layer", "F.Cu")
+        via_pts = []                                                   # (net sign, point) per change
+        for i, p in enumerate(body):
+            if i in change_at and 0 < i < len(body) - 1:
+                dprev = unit(body[i - 1], p); dnext = unit(p, body[i + 1])
+                n1, n2 = nplus(dprev), nplus(dnext); dot = 1 + n1[0] * n2[0] + n1[1] * n2[1]
+                nm = ((n1[0] + n2[0]) / dot, (n1[1] + n2[1]) / dot)   # the corner's mitre normal (the normal itself on a straight run)
+                vp = {+1: (p[0] + VIA * nm[0], p[1] + VIA * nm[1]), -1: (p[0] - VIA * nm[0], p[1] - VIA * nm[1])}
+                via_pts.append(vp)
+                if math.hypot(p[0] - body[i - 1][0], p[1] - body[i - 1][1]) > 1.3:
+                    cur_pts.append((p[0] - dprev[0] * 1.0, p[1] - dprev[1] * 1.0)); cur_offs.append(off)
+                cur_pts.append(p); cur_offs.append(VIA); cur_fix[len(cur_pts) - 1] = vp
+                chunks.append((cur_pts, cur_offs, layer, cur_fix))
+                layer = change_at[i]
+                cur_pts, cur_offs, cur_fix = [p], [VIA], {0: vp}
+                if math.hypot(body[i + 1][0] - p[0], body[i + 1][1] - p[1]) > 1.3:
+                    cur_pts.append((p[0] + dnext[0] * 1.0, p[1] + dnext[1] * 1.0)); cur_offs.append(off)
+            else:
+                cur_pts.append(p); cur_offs.append(off)
+        chunks.append((cur_pts, cur_offs, layer, cur_fix))
+        tracks_out = []
+        def emit_member(sign, net):
+            first, last = None, None
+            for cpts, coffs, clay, cfix in chunks:
+                if not cfix:                                           # a plain chunk: chamfered corners, one offset
+                    opts = chamfer(cpts, L.CHAMFER); ooffs = [off] * len(opts)
+                    offp = offset_polyline(opts, [o * sign for o in ooffs])
+                else:
+                    offp = offset_polyline(cpts, [o * sign for o in coffs])
+                    for k, vp in cfix.items():
+                        offp[k] = vp[sign]
+                for a, b in zip(offp, offp[1:]):
+                    if math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-6:
+                        tracks_out.append((net, clay, w, a, b))
+                first = offp[0] if first is None else first; last = offp[-1]
+            return first, last
+        fP, lP = emit_member(sP, netP); fN, lN = emit_member(-sP, netN)
+        for vp in via_pts:                                             # the via pair at each layer change
+            self.add_via(netP, vp[sP]); self.add_via(netN, vp[-sP])
+        offP = [fP, lP]; offN = [fN, lN]
+        # escapes: pad tip to the first/last member points
+        for side, net, offp in (("P", netP, offP), ("N", netN, offN)):
+            self.tracks.append((net, layers[0], esc_w, tips0[side], offp[0]))
+            self.tracks.append((net, layers[-1], esc_w, offp[-1], tips1[side]))
+        start = len(self.tracks); self.tracks += tracks_out
+        self.pairs_laid.append((name, netP, netN, sP, start, len(self.tracks)))
+        self.bridge(name, bridges0, netP, netN, d0, layers[0]); self.bridge(name, bridges1, netP, netN, (-d1[0], -d1[1]), layers[-1])
+        # corridors along the centreline legs
+        ends = [r for spec in (spec0, spec1) for side in ("P", "N") for r, _ in spec[side]]
+        for a, b in zip(pts, pts[1:]):
+            self.add_corridor(name, a, b, hw, ends)
+        self.lane_meta = getattr(self, "lane_meta", {}); self.lane_meta[name] = (len(switches), crossing)
+        if crossing:
+            self.lane_problems.append(f"lane {name}: the P and N pads are on opposite sides at its two ends; swap the array's channels in the schematic")
+
+    def choose_members(self, spec, d, mid, want_sign, netP, netN):
+        """The member pad per net at an end (the single pad, or for doubled pads the adjacent pair whose P side
+        matches), and the pads left over to bridge. spec: {side: [(ref, pad), ...]}."""
+        out, bridges = {}, []
+        if len(spec["P"]) == 1 and len(spec["N"]) == 1:
+            for side in ("P", "N"):
+                out[side] = self.pad_geom(*spec[side][0])[0]; out[side + "pad"] = spec[side][0]
+            return out, bridges
+        # doubled: order the four pads along the row (the '+' normal of the exit direction)
+        n = nplus(d)
+        row = sorted([(side, rp) for side in ("P", "N") for rp in spec[side]], key=lambda sn: (lambda c: c[0] * n[0] + c[1] * n[1])(self.pad_geom(*sn[1])[0]))
+        # members at one end of the row (bridges at the other), or the middle pair (bridges at both ends)
+        cands = [(row[0], row[1], row[2], row[3], "end"), (row[2], row[3], row[0], row[1], "end"), (row[1], row[2], row[0], row[3], "middle")]
+        choice = None
+        for a, b, c, dd, mode in cands:
+            if a[0] == b[0]:
+                continue
+            P = a if a[0] == "P" else b; N = b if a[0] == "P" else a
+            cP = self.pad_geom(*P[1])[0]; cN = self.pad_geom(*N[1])[0]
+            m = ((cP[0] + cN[0]) / 2, (cP[1] + cN[1]) / 2)
+            s = 1 if cross(d, (cP[0] - m[0], cP[1] - m[1])) >= 0 else -1
+            if want_sign is None or s == want_sign:
+                choice = (P, N, (a, b), (c, dd), mode); break
+        if choice is None:
+            a, b, c, dd, mode = cands[0]; P = a if a[0] == "P" else b; N = b if a[0] == "P" else a; choice = (P, N, (a, b), (c, dd), mode)
+        P, N, members, rest, mode = choice
+        out["P"] = self.pad_geom(*P[1])[0]; out["Ppad"] = P[1]; out["N"] = self.pad_geom(*N[1])[0]; out["Npad"] = N[1]
+        bridges = [("members", members), ("rest", rest), ("mode", mode)]
+        return out, bridges
+
+    def bridge(self, name, bridges, netP, netN, d, layer):
+        """A receptacle's doubled D+/D- pads: the two pads not used as members are joined to the members behind
+        the row, through vias on the far side of the board, staggered so nothing is within clearance."""
+        if not bridges:
+            return
+        info = dict(bridges); members = info["members"]; rest = info["rest"]; mode = info.get("mode", "end")
+        n = nplus(d)
+        def t_of(rp):
+            c = self.pad_geom(*rp)[0]; return c[0] * n[0] + c[1] * n[1]
+        row = sorted(list(members) + list(rest), key=lambda sn: t_of(sn[1]))
+        other = "B.Cu" if layer == "F.Cu" else "F.Cu"
+        def inner(rp):
+            c, half, ax, tht = self.pad_geom(*rp)
+            s = ax[0] * d[0] + ax[1] * d[1]
+            k = -(half - 0.1) if s > 0 else (half - 0.1)
+            return (c[0] + ax[0] * k, c[1] + ax[1] * k)
+        def at(rp, depth, dt):                                         # dt along +n from the pad's inner end, depth behind it
+            c = inner(rp)
+            return (c[0] - d[0] * depth + n[0] * dt, c[1] - d[1] * depth + n[1] * dt)
+        def net_of(sn):
+            return netP if sn[0] == "P" else netN
+        vias = collections.defaultdict(list)
+        def via(net, rp, depth, dt):
+            v = at(rp, depth, dt); vias[net].append(v)
+            back = at(rp, 0.3, 0.0)                                    # straight behind the pad first, clear of the row's next pad
+            self.tracks.append((net, layer, L.ESCAPE_WIDTH, inner(rp), back)); self.tracks.append((net, layer, L.ESCAPE_WIDTH, back, v))
+            self.add_via(net, v); return v
+        if mode == "end":
+            mirror = row[0] not in members                              # members at the high-t end of the row
+            if mirror:
+                row = row[::-1]
+            m0, m1, b2, b3 = row                                       # m0 adjoins nothing, m1 adjoins b2 (same net as m0), b3 (same net as m1)
+            sgn = -1 if mirror else 1
+            k1, k2 = L.BRIDGE_DEPTHS
+            for net, rp, depth, dt in [(net_of(m0), m0[1], k1, -0.35 * sgn), (net_of(b2), b2[1], k1, 0.05 * sgn), (net_of(m1), m1[1], k2, -0.25 * sgn), (net_of(b3), b3[1], k2, 0.8 * sgn)]:
+                via(net, rp, depth, dt)
+            for net, vs in vias.items():
+                self.tracks.append((net, other, L.ESCAPE_WIDTH, vs[0], vs[1]))
+        else:                                                          # the middle pair are the members: one bridge at each end of the row
+            p0, p1, p2, p3 = row                                       # p0 shares p2's net, p3 shares p1's net
+            k1, k2, k3 = L.BRIDGE_DEPTHS[0], L.BRIDGE_DEPTHS[1], L.BRIDGE_DEPTHS[1] + L.BRIDGE_DEPTHS[0]
+            out0 = -1.0; out3 = 1.0                                    # outward along n at each end of the row
+            v0 = via(net_of(p0), p0[1], k1, 0.35 * out0)               # p0's net, behind its end of the row
+            v2 = via(net_of(p2), p2[1], k2, 0.35 * out3)               # its member, deeper, leaning to the far end
+            v3 = via(net_of(p3), p3[1], k1, 0.5 * out3)
+            v1 = via(net_of(p1), p1[1], k3, 0.35 * out0)
+            self.tracks.append((net_of(p0), other, L.ESCAPE_WIDTH, v0, v2))                      # straight, diagonal
+            corner = (v3[0] - d[0] * (k3 - k1), v3[1] - d[1] * (k3 - k1))                        # an L: deeper first, then across
+            self.tracks.append((net_of(p3), other, L.ESCAPE_WIDTH, v3, corner))
+            self.tracks.append((net_of(p3), other, L.ESCAPE_WIDTH, corner, v1))
 
     # ---- hosts
     def best_host(self, ref):
@@ -402,8 +811,8 @@ class Placer:
             x = sum(p.x for p in pts) / len(pts) / 1e6; y = sum(p.y for p in pts) / len(pts) / 1e6
             a = self.area[ref]
             tier = (4 if a >= L.BIG_AREA else 2) if kind(host) != "passive" else 1
-            if self.is_esd(ref) and kind(host) == "conn":
-                tier = 6                                           # ESD first of all: the connector's signal pins are its
+            if (self.is_esd(ref) and kind(host) == "conn") or prefix(ref) == "Y":
+                tier = 6                                           # ESD and crystals first of all: a connector's signal pins, an IC's oscillator pins are theirs
             return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 1 else 0, scores[host])
         # only planes shared (a decoupling or bulk capacitor, or a part waiting for its partner): among the parts
         # on its rail, the one the schematic drew it beside, on the same sheet, an IC counting as nearer than a
@@ -484,7 +893,7 @@ class Placer:
                 ring = ringlist[ri]
                 if ring["members"] and normal > ring["depth"] + 1e-6 and any(rr["members"] for rr in ringlist[ri + 1:]):
                     continue                                       # fatter than this ring, and the outer rings are occupied
-                inner = base + sum(rr["depth"] for rr in ringlist[:ri]) + L.RING_GAP * ri
+                inner = base + sum(rr["depth"] for rr in ringlist[:ri]) + L.RING_GAP * ri + 0.005
                 offset = inner + normal / 2
                 reach = L.RING_REACH
                 for dt in [0] + [sgn * k * 0.5 for k in range(1, int(slide * 2) + 1) for sgn in (1, -1)]:
@@ -709,6 +1118,29 @@ class Placer:
         return omitted, outlined, not_outlined, stepped_out
 
 
+def drc_gate(path):
+    """kicad-cli pcb drc at every severity with the zones refilled; the report pinned to the title date and sorted so it is
+    reproducible; the summary by severity (unconnected items apart). Returns the error counts by kind."""
+    rep = os.path.join(os.path.dirname(path), "drc.txt")
+    subprocess.run(["kicad-cli", "pcb", "drc", "--severity-all", "--refill-zones", "--format", "report", "-o", rep, path], capture_output=True, text=True)
+    txt = open(rep, encoding="utf-8").read()
+    txt = re.sub(r"Created on \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", "Created on 2026-10-03T00:00:00", txt, count=1)
+    def sort_section(m):
+        entries = re.split(r"\n(?=\[)", m.group(0))
+        return entries[0] + "".join("\n" + e for e in sorted(entries[1:]))
+    txt = re.sub(r"^\*\* Found[^\n]*\n(?:\[.*?\n)+?(?=\n\*\*|\Z)", lambda m: sort_section(m), txt, flags=re.M | re.S)
+    txt = re.sub(r"Pad (B12|B9|B4|B1) \[", lambda m: "Pad " + {"B12": "A1", "B9": "A4", "B4": "A9", "B1": "A12"}[m.group(1)] + " [", txt)
+    open(rep, "w", encoding="utf-8").write(txt)
+    kinds = collections.Counter()
+    for m in re.finditer(r"^\[(\w+)\][^\n]*\n\s*(?:Rule: [^;]*; )?(\w+)", txt, re.M):
+        kinds[(m.group(1), m.group(2))] += 1
+    errors = {k: v for (k, sev), v in kinds.items() if sev == "error" and k != "unconnected_items"}
+    warnings = {k: v for (k, sev), v in kinds.items() if sev != "error" and k != "unconnected_items"}
+    unconnected = sum(v for (k, sev), v in kinds.items() if k == "unconnected_items")
+    print(f"DRC: {sum(errors.values())} error(s) {errors}; {unconnected} unconnected (unrouted); warnings {warnings}")
+    return errors
+
+
 def main(directives=None, out=None, project=None, house_fp=None):
     if directives is not None:
         configure(directives, out, project, house_fp)
@@ -763,7 +1195,10 @@ def main(directives=None, out=None, project=None, house_fp=None):
     # ---- the lanes' copper
     for net, layer, width, (x0, y0), (x1, y1) in P.tracks:
         tr = pcbnew.PCB_TRACK(board); tr.SetStart(MM(x0, y0)); tr.SetEnd(MM(x1, y1)); tr.SetWidth(pcbnew.FromMM(width))
-        tr.SetLayer(board.GetLayerID(layer)); tr.SetNet(netinfo[net]); board.Add(tr)
+        tr.SetLayer(board.GetLayerID(layer)); tr.SetNet(netinfo[net]); tr.SetLocked(True); board.Add(tr)
+    for net, x, y, dia, drill in P.vias:
+        v = pcbnew.PCB_VIA(board); v.SetPosition(MM(x, y)); v.SetWidth(pcbnew.FromMM(dia)); v.SetDrill(pcbnew.FromMM(drill))
+        v.SetViaType(pcbnew.VIATYPE_THROUGH); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetNet(netinfo[net]); v.SetLocked(True); board.Add(v)
     # ---- keep-outs: the corners (strips around the holes' pads), the isolation region and the lanes
     def rule_area(name, outline, layers=("F.Cu", "In1.Cu", "In2.Cu", "B.Cu"), footprints=True, tracks=True, vias=True, fills=True):
         zn = pcbnew.ZONE(board); zn.SetIsRuleArea(True)
@@ -797,8 +1232,11 @@ def main(directives=None, out=None, project=None, house_fp=None):
             ol.NewHole()
             for x, y in hole: ol.Append(MM(x, y), 0, 0)
         board.Add(zn); return zn
-    for name, net, layer, outline in L.PLANES:
-        copper_zone(name, net, layer, outline)
+    for plane in L.PLANES:
+        name, net, layer, outline = plane[:4]
+        zn = copper_zone(name, net, layer, outline)
+        if len(plane) > 4:
+            zn.SetAssignedPriority(plane[4])
     for region in L.ISOLATION_REGIONS:
         if region.get("island"):
             name, net, layer, outline = region["island"]; copper_zone(name, net, layer, outline)
@@ -842,7 +1280,7 @@ def main(directives=None, out=None, project=None, house_fp=None):
     # ---- the placement report
     hows = collections.Counter(("free" if how.startswith("free") else "ring", layer) for _, _, layer, how in P.order)
     sides = collections.Counter(P.side.values())
-    print(f"wrote {path}: {len(fps)} footprints, {len(netinfo)} nets, {len(list(board.Zones()))} zones, {len(P.tracks)} lane tracks in {time.time() - t0:.0f} s")
+    print(f"wrote {path}: {len(fps)} footprints, {len(netinfo)} nets, {len(list(board.Zones()))} zones, {len(P.tracks)} lane tracks, {len(P.vias)} vias in {time.time() - t0:.0f} s")
     print(f"placement: {len(P.fixed)} fixed; top: {hows[('ring', 'F')]} in rings at their pins, {hows[('free', 'F')]} at the nearest free spot; "
           f"bottom: {hows[('ring', 'B')]} in rings under their pins, {hows[('free', 'B')]} at the nearest free spot; "
           f"{len(P.parked)} parked in SPARE{': ' + ' '.join(P.parked) if P.parked else ''}; {residual} residual overlap(s); "
@@ -859,6 +1297,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
             facing = (dist(near) <= dist(farp) + 0.01) if (near and farp) else True
             esd.append(f"{ref}@{host} {layer}{how}{'' if facing else ' NOT FACING'}")
     print("ESD at their connectors, host-side pins toward it: " + ", ".join(esd))
+    for line in P.lane_report:
+        print("lane " + line)
     far = [(ref, host, how) for ref, host, _, how in P.order if how.startswith("free") and float(how[5:]) >= 8]
     if far:
         print("   far from their pin (mm): " + ", ".join(f"{ref}@{host} {how[5:]}" for ref, host, how in far))
@@ -871,28 +1311,7 @@ def main(directives=None, out=None, project=None, house_fp=None):
           f"({sum(1 for r in omitted if P.side[r] == 'B')} on the bottom)"
           f"{' (ICs/connectors among them: ' + ' '.join(majors_omitted) + ')' if majors_omitted else ''}; ICs/connectors labelled more than 1 mm out: {' '.join(stepped_out) or '-'}")
     print(f"   clusters outlined: {' '.join(outlined) or '-'}; dense, named by their host's designator only: {' '.join(not_outlined) or '-'}")
-    # ---- DRC gate
-    rep = os.path.join(OUT, "drc.txt")
-    # zones are filled for the check (not saved), so what the planes connect does not count as unrouted
-    subprocess.run(["kicad-cli", "pcb", "drc", "--severity-all", "--refill-zones", "--format", "report", "-o", rep, path], capture_output=True, text=True)
-    txt = open(rep, encoding="utf-8").read()
-    txt = re.sub(r"Created on \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", "Created on 2026-10-03T00:00:00", txt, count=1)
-    # the DRC lists violations in the order its threads find them: sort each section's entries
-    def sort_section(m):
-        entries = re.split(r"\n(?=\[)", m.group(0))
-        return entries[0] + "".join("\n" + e for e in sorted(entries[1:]))
-    txt = re.sub(r"^\*\* Found[^\n]*\n(?:\[.*?\n)+?(?=\n\*\*|\Z)", lambda m: sort_section(m), txt, flags=re.M | re.S)
-    # the GCT USB-C footprint has two pads at each of four positions (A1/B12, A4/B9, A9/B4, A12/B1); the DRC
-    # names either one: name the A side
-    txt = re.sub(r"Pad (B12|B9|B4|B1) \[", lambda m: "Pad " + {"B12": "A1", "B9": "A4", "B4": "A9", "B1": "A12"}[m.group(1)] + " [", txt)
-    open(rep, "w", encoding="utf-8").write(txt)
-    kinds = collections.Counter()
-    for m in re.finditer(r"^\[(\w+)\][^\n]*\n\s*(?:Rule: [^;]*; )?(\w+)", txt, re.M):
-        kinds[(m.group(1), m.group(2))] += 1
-    errors = {k: v for (k, sev), v in kinds.items() if sev == "error" and k != "unconnected_items"}
-    warnings = {k: v for (k, sev), v in kinds.items() if sev != "error" and k != "unconnected_items"}
-    unconnected = sum(v for (k, sev), v in kinds.items() if k == "unconnected_items")
-    print(f"DRC: {sum(errors.values())} error(s) {errors}; {unconnected} unconnected (unrouted); warnings {warnings}")
+    errors = drc_gate(path)
     return errors
 
 
