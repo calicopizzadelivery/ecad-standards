@@ -79,6 +79,9 @@ name: (side, [kinds outward, "D^" = along the side], start ring)},
 "inductor_out": (side, [kinds])}}`: a datasheet figure transcribed in the
 footprint's own frame; sides turn with the anchor's rotation), `TEMPLATED`
 (`{ref: layout name}`: an IC that is not a regulator placed from a figure),
+`SIDES` (`{ref: "F"|"B"}`: a part's side by directive, section 3.7; the parts
+it hosts follow it, except indicator LEDs with their series resistors, ESD
+and connectors),
 `COPPER_VOIDS` (`{name: (x0, y0, x1, y1)}`: no plane or pour on any layer,
 tracks and vias pass). Read by `copper.py` rather than the placer:
 `FLOODS`, `STITCH`, `STITCH_VIA`.

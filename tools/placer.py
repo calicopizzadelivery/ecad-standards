@@ -44,7 +44,7 @@ DEFAULTS = {"EDGE_ZONE": 3.0, "HOLE_CLEAR_R": 4.0, "PACK_MARGIN": 0.15, "RING_GA
             "ESD_VALUES": ("USBLC", "PESD", "ESDA", "TPD", "SRV05", "IP42", "TVS"), "FIXED": {}, "ANCHORS": {},
             "ESCAPE_WIDTH": 0.2, "ESCAPE_LENGTH": 1.2, "CHAMFER": 0.8, "VIA_PAIR_OFFSET": 0.45, "BRIDGE_DEPTHS": (0.8, 1.6), "THT_STUB": 1.0, "DIRECT_STUB": 0.4,
             "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5, "ISLAND_GAP": 6.0, "ISLAND_REACH": None, "ISLAND_SPREAD": 10.0,
-            "CITY_GAP": 2.0, "REGULATORS": {}, "LAYOUTS": {}, "TEMPLATED": {}, "COPPER_VOIDS": {}}
+            "CITY_GAP": 2.0, "REGULATORS": {}, "LAYOUTS": {}, "TEMPLATED": {}, "COPPER_VOIDS": {}, "SIDES": {}}
 
 
 class Directives:
@@ -591,13 +591,9 @@ class Placer:
             for other, blocks in self.under.items():
                 if other != ref and any(overlap(b, c) for c in blocks):
                     return f"under {other}"
-        for other, ob in self.boxes[layer].items():
+        for other, ob in self.boxes[layer].items():              # the void between cities holds on each side: one channel may sit under another (3.7)
             if other != ref and other not in ignore and overlap(b, ob, self.margin(ref, other)):
                 return other
-        if L.CITY_GAP > L.PACK_MARGIN:                           # the void between cities holds across the board, not per side
-            for other, ob in self.boxes["B" if layer == "F" else "F"].items():
-                if other != ref and other not in ignore and not self.same_city(ref, other) and overlap(b, ob, L.CITY_GAP):
-                    return f"{other} (other side)"
         return None
 
     def exempt(self, ref):
@@ -1044,6 +1040,18 @@ class Placer:
             self.tracks.append((net_of(p3), other, L.ESCAPE_WIDTH, v3, corner))
             self.tracks.append((net_of(p3), other, L.ESCAPE_WIDTH, corner, v1))
 
+    def forced_side(self, ref, host):
+        """The directives' side for this part (SIDES, layout.md 3.7: one channel of a mirrored pair on each side), or its
+        host's forced side for the parts that follow it; an indicator LED, an ESD part or a connector never follows."""
+        if ref in L.SIDES:
+            return L.SIDES[ref]
+        if host in L.SIDES and not self.values[ref].upper().startswith("LED") and not self.is_esd(ref) and kind(ref) != "conn":
+            if prefix(ref) == "R" and any(len(self.nets.get(net, ())) == 2 and any(self.values.get(hr, "").upper().startswith("LED") for hr, _ in self.nets[net])
+                                          for _, net in self.pads_of[ref] if net):
+                return None                                        # an indicator's series resistor stays on top with its LED
+            return L.SIDES[host]
+        return None
+
     # ---- the datasheet's layout template (layout.md 3.2)
     def template_hint(self, host, ref, shared, lay):
         """Where the template puts this part: the pin it hangs from (the most specific of the templated pins it shares),
@@ -1211,7 +1219,8 @@ class Placer:
         if hb is None:                                             # a parked host has no box: the nearest free spot will do
             return None
         gap = L.RING_GAP if self.same_city(ref, host) else L.CITY_GAP   # another city's host: the void between them (3.1)
-        base = -L.BOTTOM_TUCK if (layer == "B" and self.side[host] == "F") else gap   # under the host's pin row, or beside it
+        tuck = layer == "B" and self.side[host] == "F" and host not in self.under   # under an SMD host's pin row (not a through-hole part's), else beside it
+        base = -L.BOTTOM_TUCK if tuck else gap
         d = {"L": point[0] - hb[0], "R": hb[2] - point[0], "T": point[1] - hb[1], "B": hb[3] - point[1]}
         for side in list(sides) + [s for s in sorted(d, key=d.get) if s not in sides]:   # the directives' side first, else nearest first
             rot = self.orientation(ref, hostnet, side, layer, host)
@@ -1298,19 +1307,27 @@ class Placer:
                 print(f"{ref}: chosen with priority {prio} (host {host}, template {hint}); {len(self.order)} satellites down before it")
             if ref not in self.city_of and host in self.city_of:   # a lone part joins its host's city (3.1)
                 self.city_of[ref] = self.city_of[host]
-            layer = "B" if self.bottom_ok(ref, host) else "F"
+            forced = self.forced_side(ref, host)
+            layer = forced or ("B" if self.bottom_ok(ref, host) else "F")
             if hint:
                 sides, first_ring, along = hint["sides"], hint["ring"], hint["along"]
             else:
                 sides = (L.REGULATORS[host]["sw"],) if host in L.REGULATORS and hostnet == self.reg_nets[host]["sw"] and "sw" in L.REGULATORS[host] else ()
                 first_ring, along = 0, False
+                if forced and kind(host) == "conn" and ref in L.SIDES:   # the split channel's switch sits inboard of its connector, as the top one does (3.7)
+                    hb = self.box_of(host)
+                    edge = min({"L": hb[0], "R": W - hb[2], "T": hb[1], "B": H - hb[3]}.items(), key=lambda kv: kv[1])[0]
+                    sides = ({"L": "R", "R": "L", "T": "B", "B": "T"}[edge],)
             how = None
-            if layer == "B" and not self.has_specific(ref):        # decoupling stays on its IC's side unless its first rings are full
+            if layer == "B" and not forced and not self.has_specific(ref) and self.side[host] == "F":   # decoupling stays on its IC's side unless its first rings are full
                 how = self.place_in_rings(ref, host, point, hostnet, "F", rings=2, sides=sides, first_ring=first_ring, along=along)
             how = how or self.place_in_rings(ref, host, point, hostnet, layer, sides=sides, first_ring=first_ring, along=along)
-            if not how and layer == "B":                           # no ring under the pin: near it on the bottom, else beside it on top
-                how = self.place_nearest(ref, point, hostnet, "B", radius=8.0) or self.place_in_rings(ref, host, point, hostnet, "F")
-            how = how or self.place_nearest(ref, point, hostnet, layer) or (layer == "B" and self.place_nearest(ref, point, hostnet, "F"))
+            if forced:                                             # a directed side is kept: the nearest free spot on it
+                how = how or self.place_nearest(ref, point, hostnet, layer)
+            else:
+                if not how and layer == "B":                       # no ring under the pin: near it on the bottom, else beside it on top
+                    how = self.place_nearest(ref, point, hostnet, "B", radius=8.0) or self.place_in_rings(ref, host, point, hostnet, "F")
+                how = how or self.place_nearest(ref, point, hostnet, layer) or (layer == "B" and self.place_nearest(ref, point, hostnet, "F"))
             if ref == DEBUG_REF:
                 print(f"{ref}: host {host} at {point[0]:.1f},{point[1]:.1f} facing {hostnet}, side {layer}: {how}; placed as number {len(self.order) + 1}; "
                       f"spots rejected by: {dict(self.debug.most_common(8))}")
@@ -1688,13 +1705,13 @@ def main(directives=None, out=None, project=None, house_fp=None):
         placed = [(r, layer, bx) for layer in ("F", "B") for r, bx in P.boxes[layer].items() if not P.exempt(r)]
         for i, (ra, la, ba) in enumerate(placed):
             for rb, lb, bb in placed[i + 1:]:
-                if P.same_city(ra, rb):
+                if la != lb or P.same_city(ra, rb):
                     continue
                 g = max(max(bb[0] - ba[2], ba[0] - bb[2]), max(bb[1] - ba[3], ba[1] - bb[3]))
                 if g < L.CITY_GAP - 0.01:
                     narrow.append((g, ra, rb))
         narrow.sort()
-        f.write(f"\nvoids (layout.md 3.1): every two parts of different cities keep {L.CITY_GAP:g} mm, both sides; narrower gaps:\n" +
+        f.write(f"\nvoids (layout.md 3.1): every two parts of different cities on one side keep {L.CITY_GAP:g} mm; narrower gaps:\n" +
                 ("".join(f"  {ra}-{rb} {g:.2f} mm\n" for g, ra, rb in narrow) if narrow else "  none\n"))
     n_isl = sum(1 for _, (s, refs, _) in P.islands.items() if sum(1 for r in refs if follows_island(r)) >= 2)
     print(f"cities: {n_isl} with two or more parts; parts placed apart from their city (> {L.ISLAND_SPREAD:g} mm from every other member): {' '.join(sorted(set(apart), key=natural)) or '-'}")

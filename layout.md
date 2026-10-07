@@ -168,7 +168,7 @@ honoured exactly and the start is reproducible:
    draws it beside (waiting for it if it is not down yet), at that IC's next
    free pin on the rail, a capacitor never to another capacitor outside its
    own island. Every spot a part is tried at keeps the packing margin to its
-   own city and the void to every other city, on both sides, and a ring on
+   own city and the void to every other city on its side, and a ring on
    another city's host starts the void away from it; the fixed parts are
    checked against the same rule, so two anchors of different cities closer
    than the void are refused. The attachment point is the host's
@@ -187,8 +187,8 @@ honoured exactly and the start is reproducible:
    could not keep within 8 mm of its pin, and a placement report beside the
    board file (`placement.txt`) records each part's host and ring, then
    each city's extent on the board with the members placed more than 10 mm
-   from every other member, then every gap between two cities narrower than
-   the void. Those far parts, the members placed apart from their city, and
+   from every other member, then every gap between two cities on one side
+   narrower than the void. Those far parts, the members placed apart from their city, and
    the indicator LEDs (which belong where they can be seen, not at the pin
    that drives them), are the first hand work.
 7. Planes are drawn as zones (the ground plane on L2, the rails as regions
@@ -281,9 +281,10 @@ follows the next routing.
   streets). A label is a road out of town: what leaves an island by name
   belongs to the island it lands in. On the board each island is a city,
   its parts packed together, and between any two cities lies a **void of
-  2 mm** (directive `CITY_GAP`) on both sides of the board where no part of
+  2 mm** (directive `CITY_GAP`) on each side of the board where no part of
   either stands: the roads, the routing between the blocks, run in the
-  voids. The island's hub (its member with the most pins) goes down first,
+  voids. The void holds per side, so one channel of a split pair (3.7) may
+  sit under the other. The island's hub (its member with the most pins) goes down first,
   at the placed part it shares the most nets with, and every other member
   is placed at a member of its own city that it shares a net with, waiting
   for the hub rather than taking a host elsewhere. Outside the cities stand
@@ -398,7 +399,15 @@ edge, under its pin row, and keeps 0.5 mm from through-hole pads (both
 measured, section 9; wave or selective soldering needs the assembler's own
 figure). Nothing goes under an exposed pad's via field or stands taller
 than the standoffs allow. On two-sided boards in practice about half the
-parts and two thirds of the passives are underneath. The corner keep-outs, the edge zone, the lanes and the isolation
+parts and two thirds of the passives are underneath.
+**A mirrored pair of channels at one connector may be split between the
+sides**: where a stacked receptacle or a dual part carries two identical
+channels, the directives (`SIDES`) put one channel's switch or driver and
+its capacitors on the bottom and the other's on top, the bottom one beside
+the connector where the top one sits over it, so the area in front of the
+connector holds one channel per side instead of two side by side. The
+channel's indicator LED and its series resistor stay on top, and so does
+its ESD. The corner keep-outs, the edge zone, the lanes and the isolation
 rule apply on both sides. The point of the bottom is the top: the area it
 frees is for the blocks' copper zones (section 4), not for more parts. The
 assembler is consulted on double-sided reflow before the first order.
