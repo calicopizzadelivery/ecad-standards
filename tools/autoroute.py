@@ -16,14 +16,34 @@ def main():
     ap.add_argument("board"); ap.add_argument("freerouting")
     ap.add_argument("--passes", type=int, default=50); ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=7200)
+    ap.add_argument("--plane-layers", nargs="*", default=["In1.Cu", "In2.Cu"], help="layers the router may not route on (planes only)")
+    ap.add_argument("--keepout-grow", type=float, default=2.0, help="a rule area named for a .kicad_dru rule goes out as a hard keep-out grown by this much (mm)")
+    ap.add_argument("--max-width", type=float, default=1.0, help="cap on the class track widths given to the router (mm): the planes carry the current")
     a = ap.parse_args()
     board_path = os.path.abspath(a.board); work = os.path.splitext(board_path)[0]
     b = pcbnew.LoadBoard(board_path)
     fixed = sum(1 for t in b.GetTracks() if t.IsLocked())
     dsn, ses = work + ".dsn", work + ".ses"
-    if not pcbnew.ExportSpecctraDSN(b, dsn):
+    # the export copy: KiCad writes every rule area as a blanket keep-out, so the areas that only keep parts out (the
+    # lanes' corridors, an isolation region named for a rule) are dropped from it; the real board keeps them
+    export = pcbnew.LoadBoard(board_path)
+    dropped, hardened = 0, 0
+    for z in list(export.Zones()):
+        if z.GetIsRuleArea() and not z.GetDoNotAllowTracks():
+            if str(z.GetZoneName()).startswith("lane"):              # a corridor for parts: the router routes through it
+                export.Remove(z); dropped += 1
+            else:                                                     # a region a .kicad_dru rule guards by class: the router cannot, so it keeps out, grown by the creepage
+                z.SetDoNotAllowTracks(True); z.SetDoNotAllowVias(True)
+                z.Outline().Inflate(pcbnew.FromMM(a.keepout_grow), pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, pcbnew.FromMM(0.05)); hardened += 1
+    if not pcbnew.ExportSpecctraDSN(export, dsn):
         raise SystemExit("DSN export failed")
-    print(f"exported {os.path.basename(dsn)} with {fixed} fixed items; routing up to {a.passes} passes")
+    txt = open(dsn, encoding="utf-8").read()
+    for layer in a.plane_layers:                                     # plane layers are not for routing: vias reach them
+        txt = re.sub(r"(\(layer %s\n\s*\(type )signal" % re.escape(layer), r"\1power", txt, count=1)
+    cap = int(round(a.max_width * 1000))                              # the DSN is in um
+    txt = re.sub(r"\(width (\d+)\)", lambda m: f"(width {min(int(m.group(1)), cap)})", txt)
+    open(dsn, "w", encoding="utf-8").write(txt)
+    print(f"exported {os.path.basename(dsn)} with {fixed} fixed items, {dropped} corridors left out, {hardened} regions hardened, widths capped at {a.max_width} mm, planes on {' '.join(a.plane_layers)}; routing up to {a.passes} passes")
     r = subprocess.run([a.freerouting, "-de", dsn, "-do", ses, "-mp", str(a.passes), "-mt", str(a.threads)],
                        capture_output=True, text=True, timeout=a.timeout)
     tail = [l for l in (r.stdout + r.stderr).splitlines() if "unrouted" in l.lower() or "completed" in l.lower()][-3:]
@@ -33,13 +53,23 @@ def main():
         raise SystemExit("FreeRouting produced no session file")
     if not pcbnew.ImportSpecctraSES(b, ses):
         raise SystemExit("SES import failed")
+    pcbnew.SaveBoard(board_path, b, True)                           # save at once: the board object is not usable after the import
+    b = pcbnew.LoadBoard(board_path)
+    floor = b.GetDesignSettings().m_TrackMinWidth                   # the router's pad-entry stubs can come in under the fab's floor
+    widened = 0
+    for tr in b.GetTracks():
+        if tr.GetClass() == "PCB_TRACK" and 0 < tr.GetWidth() < floor:
+            tr.SetWidth(floor); widened += 1
+    if widened:
+        print(f"   {widened} stubs widened to the {floor / 1e6:.3f} mm floor")
     pcbnew.SaveBoard(board_path, b, True)
     os.remove(dsn); os.remove(ses)
     import placer
-    t = open(board_path, encoding="utf-8").read()
+    text = open(board_path, encoding="utf-8").read()
     placer.PROJECT = os.path.splitext(os.path.basename(board_path))[0]
-    open(board_path, "w", encoding="utf-8").write(placer.canonical(t))
-    print(f"imported the session: {sum(1 for t in b.GetTracks() if t.GetClass() == 'PCB_TRACK')} tracks, {sum(1 for t in b.GetTracks() if t.GetClass() == 'PCB_VIA')} vias")
+    open(board_path, "w", encoding="utf-8").write(placer.canonical(text))
+    text = open(board_path, encoding="utf-8").read()
+    print(f"imported the session: {text.count(chr(10) + chr(9) + '(segment')} tracks, {text.count(chr(10) + chr(9) + '(via')} vias")
     placer.drc_gate(board_path)
 
 
