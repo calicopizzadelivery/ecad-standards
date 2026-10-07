@@ -316,6 +316,17 @@ assembler is consulted on double-sided reflow before the first order.
 
 ## 4. Copper
 
+- **Pads join zones through thermal reliefs** (0.5 mm gap, 0.5 mm spokes,
+  four where the pad allows), solid only where the directives ask for it
+  (a regulator's exposed pad, a current path); zones fill with a 0.2 to
+  0.25 mm minimum width at 0.25 to 0.3 mm clearance. (Practice: every zone
+  on every reference board uses thermal reliefs, at 0.5 mm; zone minimum
+  width 0.2 mm, clearance 0.24 mm.)
+- **Ground floods the outer layers** around the routing, stitched to the
+  plane (section 5), so return paths and shielding do not depend on the
+  plane alone. (Practice: ground pours cover about half of each outer
+  layer; three to five power pours per board carry the rails.)
+
 - **Planes and power distribution are polygons.** A power net that feeds
   more than one part is a polygon on its layer, never a wide trace where a
   pour will do; the ground plane is one unbroken polygon under every
@@ -333,16 +344,39 @@ assembler is consulted on double-sided reflow before the first order.
 
 - **Controlled-impedance pairs** (parent 13.11): on one layer over an
   unbroken reference plane, no vias except at the pads, end-to-end, the two
-  tracks of a pair matched in length, the geometry from the directives'
-  stackup and the fab's impedance calculator. USB 2.0 pairs are 90 Ω
-  differential, through their ESD array (3.8), from receptacle to
-  transceiver.
+  tracks of a pair matched in length within 1 mm, the geometry from the
+  directives' stackup and the fab's impedance calculator. USB 2.0 pairs are
+  90 Ω differential, through their ESD array (3.8), from receptacle to
+  transceiver. Practice (section 9) matches pairs to 0.8 mm (1.4 mm at the
+  90th percentile) but changes layers on two pairs in three, with three or
+  four vias: this standard keeps the parent's rule and, where a change of
+  layer is unavoidable, makes it once, both tracks together, with a ground
+  via beside the pair at the change. A pair class whose width and gap are
+  KiCad's defaults is not a pair class; the numbers come from the stackup.
+- **Signal tracks** are 0.2 mm wide at 0.15 mm clearance by default (the
+  net class the generator writes), down to the fab's minimum where a pitch
+  demands it; vias 0.6 mm on a 0.3 mm drill, through-hole only, no blind or
+  micro vias without a reason in the directives. (Practice: 0.18 to 0.2 mm
+  tracks at 0.13 to 0.15 mm, vias 0.56 to 0.6 mm on 0.3 to 0.4 mm drills,
+  no blind or micro vias on any reference board.)
 - **Loops small** (parent 13.12.2 g): every signal has its return directly
   under it; a signal that changes layer gets a ground via beside it.
 - **Crystals**: the shortest possible tracks to the IC, load capacitors
   between, a ground ring, no signals routed through the area.
 - **High-current paths** follow the class width without necking at pads;
   a sense or limit resistor's trace is short and away from switching nodes.
+  The class width comes from the current and the parent's IPC-2152 limit,
+  not from habit: reference boards run power at 0.5 mm with a 1 mm 90th
+  percentile, which is why their rails are pours rather than tracks.
+- **Layers**: on a four-layer board the outer layers route and carry
+  ground pours, the first inner layer is the unbroken ground plane, the
+  second inner layer carries the power planes and the few tracks that must
+  cross the board. (Practice: the bottom carries 40 to 45 % of the track
+  length, the inner layers 3 to 12 %, and every multilayer reference board
+  has a ground plane on an inner layer, most on the one under the top.)
+- **Ground stitching**: the outer ground pours are tied to the plane with
+  vias at about four per square centimetre, and a ground via sits beside
+  every signal that changes layer. (Practice: 3 to 5 ground vias per cm².)
 - **Lanes**: a high-current path is routed inside the lane the directives
   drew for it, at the class width, with nothing else in the corridor; a
   pair's lane runs from its receptacle through its ESD array to its IC. A
@@ -430,7 +464,8 @@ tuck under an IC and keep from through-hole pads, the designators'
 visibility and size, and the track widths. The method and the table are in
 the project's `docs/reference-boards.md`; the medians that set the rules
 above (2026-10-06, 81 boards: Olimex 48, MNT Reform 14, SparkFun 16,
-Raspberry Pi 3):
+Raspberry Pi 3; routing rows from the same boards, the pair rows from the
+49 with routed pairs, the layer rows from the 51 multilayer boards):
 
 | Measure | Reference boards (median; two-sided boards) | This standard |
 |---|---|---|
@@ -446,6 +481,21 @@ Raspberry Pi 3):
 | ESD part to its connector | 3.5-6.8 mm | at the connector, first ring |
 | Crystal to its IC | 5.9 mm | at the IC, first ring |
 | Courtyard area over board area | 54 % (76 %) | a density to expect |
+| Signal track width (multilayer boards) | 0.2 mm (0.18) | 0.2 mm default |
+| Clearance in the boards' rules | 0.15 mm (0.13) | 0.15 mm default, fab minimum 0.127 |
+| Via diameter / drill | 0.6 / 0.4 mm (0.56 / 0.3) | 0.6 / 0.3 mm |
+| Blind or micro vias | none | none without a reason |
+| Power track width, median / 90th | 0.5 / 1.0 mm | by current, as pours |
+| Track length on the bottom layer | 45 % (39 %) | both outer layers route |
+| Track length on inner layers | 3 % (12 %) | planes, a few crossings |
+| Inner ground plane on multilayer boards | all; under the top on most | In1 unbroken ground |
+| Ground vias per cm² | 3.3 (4.2) | about 4 |
+| Pads to zones by thermal relief | 100 % of zones, 0.5 mm gap and spoke | thermal, 0.5 / 0.5 |
+| Zone minimum width / clearance | 0.2 / 0.24 mm | 0.25 / 0.3 mm |
+| Ground pour share of the outer layers | 44 % | flood around the routing |
+| Pair gap / width in the copper (49 boards with pairs) | 0.15 / 0.13 mm | from the stackup (90 Ω) |
+| Pair length mismatch, median / 90th | 0.8 / 1.4 mm | within 1 mm |
+| Pairs on a single layer | 1 in 3; 3 vias per pair | one layer, no vias (parent 13.11) |
 
 A rule that practice contradicts is either changed here with the number,
 or kept with its reason stated (the edge zone keeps the parent's conveyor
