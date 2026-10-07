@@ -221,6 +221,16 @@ has been edited. The schematic generator stays usable, because its derived
 UUIDs keep the footprints linked (see
 [kicad-generation.md](kicad-generation.md)).
 
+A change to the outline or to the edge connectors is a new generation, not
+an edit: the routing is discarded (it stays in the history), the directives
+are changed and the board is regenerated. A board that grows is grown as a
+band of new board inserted at a cut line between blocks: every block tied to
+the edge that moves (its connectors, the ICs behind them, the fixed parts,
+the isolated region, the lanes' coordinate legs, the rail rectangles and
+the stitching rectangles) moves by the band's width, everything on the other
+side stays, and the band is the room gained. The copper pass (step 11)
+follows the next routing.
+
 ## 3. Placement
 
 ### 3.1 Flow
