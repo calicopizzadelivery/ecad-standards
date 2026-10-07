@@ -66,11 +66,16 @@ would cross the N member between its ends (the array's channels then swap
 in the schematic, layout.md 3.8). Tunables: `ESCAPE_WIDTH`, `ESCAPE_LENGTH`,
 `THT_STUB`, `DIRECT_STUB`, `CHAMFER`, `VIA_PAIR_OFFSET`, `BRIDGE_DEPTHS`,
 `MATCH_TOLERANCE`, `BUMP_HEIGHT`, `BUMP_WIDTH`, `ISLAND_GAP` (6.0: symbol
-bodies closer than this on the sheet are one island), `ISLAND_REACH` (25.0:
-a wire joins two symbols into an island only while their bodies are within
-this), `ISLAND_SPREAD` (15.0: a member farther than this from its island's
-centre on the board is reported). Read by `copper.py` rather than the
-placer: `FLOODS`, `STITCH`, `STITCH_VIA`.
+bodies closer than this on the sheet are one island), `ISLAND_REACH` (None:
+a wire joins two symbols whatever their distance; a number caps the body
+distance it may bridge), `ISLAND_SPREAD` (10.0: a member farther than this
+from every other member of its city on the board is reported), `CITY_GAP`
+(2.0: the void between any two cities' parts, both sides), `REGULATORS`
+(`{ref: {"sw": "L"|"R"|"T"|"B", "sw_pin": name or pad, "in_pin": ...}}`:
+the regulators' cities go first, the inductor and diode on that side),
+`COPPER_VOIDS` (`{name: (x0, y0, x1, y1)}`: no plane or pour on any layer,
+tracks and vias pass). Read by `copper.py` rather than the placer:
+`FLOODS`, `STITCH`, `STITCH_VIA`.
 
 `PLANES` entries take an optional fifth item, the zone priority, so rail
 regions on one layer carve a base plane under them.

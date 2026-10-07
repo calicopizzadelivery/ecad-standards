@@ -43,7 +43,8 @@ DEFAULTS = {"EDGE_ZONE": 3.0, "HOLE_CLEAR_R": 4.0, "PACK_MARGIN": 0.15, "RING_GA
             "BOTTOM_NEVER_CLASSES": set(), "BOTTOM_TUCK": 1.75, "THT_MARGIN": 0.5, "EP_MARGIN": 0.6, "REFDES_SIZES": (0.8, 0.7),
             "ESD_VALUES": ("USBLC", "PESD", "ESDA", "TPD", "SRV05", "IP42", "TVS"), "FIXED": {}, "ANCHORS": {},
             "ESCAPE_WIDTH": 0.2, "ESCAPE_LENGTH": 1.2, "CHAMFER": 0.8, "VIA_PAIR_OFFSET": 0.45, "BRIDGE_DEPTHS": (0.8, 1.6), "THT_STUB": 1.0, "DIRECT_STUB": 0.4,
-            "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5, "ISLAND_GAP": 6.0, "ISLAND_REACH": 25.0, "ISLAND_SPREAD": 15.0}
+            "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5, "ISLAND_GAP": 6.0, "ISLAND_REACH": None, "ISLAND_SPREAD": 10.0,
+            "CITY_GAP": 2.0, "REGULATORS": {}, "COPPER_VOIDS": {}}
 
 
 class Directives:
@@ -189,10 +190,12 @@ def sch_islands(gap, reach):
         for a, b in wires:
             union(a, b)
         pts = {p for w in wires for p in w}
+        def on_run(p, a, b):
+            return (p != a and p != b and min(a[0], b[0]) - 0.01 <= p[0] <= max(a[0], b[0]) + 0.01 and min(a[1], b[1]) - 0.01 <= p[1] <= max(a[1], b[1]) + 0.01
+                    and abs((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) < 0.02 * max(1.0, math.hypot(b[0] - a[0], b[1] - a[1])))
         for p in pts:                                              # a wire ending on another wire's run joins it
             for a, b in wires:
-                if p != a and p != b and min(a[0], b[0]) - 0.01 <= p[0] <= max(a[0], b[0]) + 0.01 and min(a[1], b[1]) - 0.01 <= p[1] <= max(a[1], b[1]) + 0.01 \
-                        and abs((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) < 0.02 * max(1.0, math.hypot(b[0] - a[0], b[1] - a[1])):
+                if on_run(p, a, b):
                     union(p, a)
         symbols = []
         for node in doc:
@@ -217,8 +220,12 @@ def sch_islands(gap, reach):
         by_wire = collections.defaultdict(list)
         for ref, _, pins in symbols:
             for p in pins:
-                if p in pts or any(p in s[2] for s in symbols if s[0] != ref):   # on a wire, or pin to pin
+                if p in pts or any(p in s[2] for s in symbols if s[0] != ref):   # on a wire's end, or pin to pin
                     by_wire[find(p)].append(ref)
+                else:
+                    for a, b in wires:                             # or on a wire's run (a capacitor hung from a bus)
+                        if on_run(p, a, b):
+                            union(p, a); by_wire[find(p)].append(ref); break
         box_of = {ref: box for ref, box, _ in symbols}
         def body_gap(a, b):
             ba, bb = box_of[a], box_of[b]
@@ -226,7 +233,7 @@ def sch_islands(gap, reach):
         for refs in by_wire.values():
             for i, ra in enumerate(refs):
                 for rb in refs[i + 1:]:
-                    if body_gap(ra, rb) <= reach:
+                    if reach is None or body_gap(ra, rb) <= reach:
                         sym_parent[sfind(ra)] = sfind(rb)
         for i, (ra, ba, _) in enumerate(symbols):
             for rb, bb, _ in symbols[i + 1:]:
@@ -244,6 +251,40 @@ def sch_islands(gap, reach):
             for r in refs:
                 ref_island[r] = iid
     return ref_island, islands
+
+
+def sch_pin_names():
+    """{ref: {pad number: pin name}} from the sheets' library symbols, for the regulators' SW and VIN pins."""
+    names = {}
+    for f in sorted(glob.glob(os.path.join(OUT, "*.kicad_sch"))):
+        doc = sexp(open(f, encoding="utf-8").read())[0]
+        libs = {}
+        for node in doc:
+            if isinstance(node, list) and node and node[0] == "lib_symbols":
+                for sym in node[1:]:
+                    if not (isinstance(sym, list) and sym and sym[0] == "symbol"):
+                        continue
+                    pins = {}
+                    def walk(n):
+                        for item in n:
+                            if isinstance(item, list) and item:
+                                if item[0] == "pin":
+                                    nm = next((i[1] for i in item if isinstance(i, list) and i and i[0] == "name"), None)
+                                    num = next((i[1] for i in item if isinstance(i, list) and i and i[0] == "number"), None)
+                                    if nm is not None and num is not None:
+                                        pins[str(num)] = str(nm)
+                                elif item[0] != "property":
+                                    walk(item)
+                    walk(sym); libs[sym[1]] = pins
+        for node in doc:
+            if not (isinstance(node, list) and node and node[0] == "symbol"):
+                continue
+            props = {i[1]: i[2] for i in node if isinstance(i, list) and i and i[0] == "property" and len(i) >= 3}
+            ref = props.get("Reference", "")
+            lib_id = next((i[1] for i in node if isinstance(i, list) and i and i[0] == "lib_id"), None)
+            if ref and not ref.startswith("#") and lib_id in libs:
+                names.setdefault(ref, {}).update(libs[lib_id])
+    return names
 
 
 def load_footprint(fpid):
@@ -382,6 +423,7 @@ class Placer:
         self.plane = {n for n, nodes in nets.items() if len(nodes) > 8}
         self.loop = {n for n, nodes in nets.items() if any(prefix(r) == "L" for r, _ in nodes)}   # an inductor's nets: a switching loop
         self.boxes = {"F": {}, "B": {}}                   # side -> ref -> courtyard box of every placed part
+        self.debug_shown = 0
         self.side = {}
         self.under = {}                                   # a top part -> the boxes it denies the bottom (THT pads, EP via field, a crystal)
         self.lanes = []                                   # (name, box) corridors kept free of parts on both sides
@@ -402,10 +444,32 @@ class Placer:
         self.regions = list(L.ISOLATION_REGIONS)         # each: name, outline, rects, grown, nets (regex), classes, gap, island
         self.island, self.islands = sch_islands(L.ISLAND_GAP, L.ISLAND_REACH)   # layout.md 3.1: {ref: island}, {island: (sheet, refs, sheet bbox)}
         self.hub_of = {}                                  # island -> its hub: the member with the most pads, connectors aside
+        self.city_of = {}                                 # ref -> city (layout.md 3.1): its island when that has two or more parts; a lone part joins its host's city when placed
         for iid, (_, refs, _) in self.islands.items():
             members = [r for r in refs if r in self.fps and kind(r) != "conn" and r not in L.HOLES]
             if members:
                 self.hub_of[iid] = max(members, key=lambda r: (len(self.pads_of[r]), kind(r) == "ic", [-ord(c) for c in r]))
+            if len(members) >= 2:
+                for r in members:
+                    self.city_of[r] = iid
+        self.regulator_of = {self.island[r]: r for r in L.REGULATORS if r in self.island}   # island -> the regulator that is its hub
+        self.reg_nets = {}                                # regulator -> {"sw": net, "in": net} from the schematic's pin names (or the directive's pin numbers)
+        pin_names = sch_pin_names() if L.REGULATORS else {}
+        for r, cfg in L.REGULATORS.items():
+            if r not in self.fps:
+                continue
+            net_of_pad = dict(self.pads_of[r]); by_name = {}
+            for num, nm in pin_names.get(r, {}).items():
+                if num in net_of_pad:
+                    by_name.setdefault(nm.upper(), net_of_pad[num])
+            def pick(key, *defaults):
+                want = str(cfg.get(key, "")).upper()
+                if want and want in net_of_pad:                    # a pad number
+                    return net_of_pad[want]
+                return next((by_name[k] for k in ((want,) if want else ()) + defaults if k in by_name), None)
+            self.reg_nets[r] = {"sw": pick("sw_pin", "SW", "LX", "PH", "SW1"), "in": pick("in_pin", "VIN", "PVIN", "IN", "VCC")}
+            if not self.reg_nets[r]["sw"]:
+                print(f"regulator {r}: no SW pin found (name it with 'sw_pin' in REGULATORS); pins by name: {sorted(by_name)}")
 
     def has_specific(self, ref):
         return any(n and n not in self.plane and not n.startswith("unconnected-") for _, n in self.pads_of[ref])
@@ -428,6 +492,8 @@ class Placer:
         for _, net in self.pads_of[ref]:
             if net and (self.classes.get(net) in L.BOTTOM_NEVER_CLASSES or net in self.loop):
                 return False
+        if host and not self.same_city(ref, host):               # another city's land (3.1): not under its host either
+            return False
         return not (host and prefix(host) == "Y")
 
     # ---- geometry helpers
@@ -502,9 +568,27 @@ class Placer:
                 if other != ref and any(overlap(b, c) for c in blocks):
                     return f"under {other}"
         for other, ob in self.boxes[layer].items():
-            if other != ref and other not in ignore and overlap(b, ob, L.PACK_MARGIN):
+            if other != ref and other not in ignore and overlap(b, ob, self.margin(ref, other)):
                 return other
+        if L.CITY_GAP > L.PACK_MARGIN:                           # the void between cities holds across the board, not per side
+            for other, ob in self.boxes["B" if layer == "F" else "F"].items():
+                if other != ref and other not in ignore and not self.same_city(ref, other) and overlap(b, ob, L.CITY_GAP):
+                    return f"{other} (other side)"
         return None
+
+    def exempt(self, ref):
+        """Connectors, holes and ESD parts stand outside the cities (layout.md 3.1 and 3.8: ESD sits at its
+        connector, in line with the pair, whatever island drew it): a part keeps the packing margin to them."""
+        return kind(ref) == "conn" or ref in L.HOLES or (ref in self.values and self.is_esd(ref)) or ref not in self.city_of
+
+    def same_city(self, a, b):
+        if self.exempt(a) or self.exempt(b):
+            return True
+        ca, cb = self.city_of.get(a), self.city_of.get(b)
+        return ca is not None and ca == cb
+
+    def margin(self, a, b):
+        return L.PACK_MARGIN if self.same_city(a, b) else L.CITY_GAP
 
     # ---- the fixed parts
     def place_fixed(self):
@@ -948,7 +1032,7 @@ class Placer:
             nodes = self.nets[net]
             w = (0.15 if net in self.plane else 1.0) * self.weight.get(net, 1.0) / len(nodes)
             for hr, hp in nodes:
-                if hr == ref or hr not in self.side or hr in L.HOLES:
+                if hr == ref or hr not in self.side or hr in L.HOLES or hr in self.parked:
                     continue
                 where = 2.5 if (isl and self.island.get(hr) == isl) else 1.5 if self.same_sheet(hr, ref) else 1.0
                 bonus = {"conn": 2.5, "ic": 1.3, "passive": 1.0}[kind(hr)] * where
@@ -978,6 +1062,11 @@ class Placer:
                 tier = 6                                           # ESD and crystals first of all: a connector's signal pins, an IC's oscillator pins are theirs
             if waiting and tier < 6:
                 tier = 0
+            reg = self.regulator_of.get(isl)
+            if reg and ref != reg and not waiting and tier < 6:    # a regulator's city (3.2) is placed before every other satellite: its
+                nets = {net for _, net in specific[host]}          # switching loop (inductor, diode) first, then the rest at their pins
+                tier = 5.9 if self.reg_nets[reg]["sw"] in nets else 5.6
+                return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 5.8 else -a, scores[host])
             return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 1 else 0, scores[host])
         # only planes shared (a decoupling or bulk capacitor, or a part waiting for its partner): among the parts
         # on its rail, the one the schematic drew it beside, on the same sheet, an IC counting as nearer than a
@@ -1008,6 +1097,9 @@ class Placer:
         waiting = waiting or self.has_specific(ref)
         a = self.area[ref]
         tier = 0 if waiting else 5 if a < L.SMALL_AREA else 3      # small decoupling first of all; bulk after the big parts on the pins
+        reg = self.regulator_of.get(isl)
+        if reg and ref != reg and not waiting:                     # a regulator's input and output capacitors: smallest nearest the pin, before all
+            return host, resolve, rail, (5.8 if rail == self.reg_nets[reg]["in"] else 5.7, -a, scores[host])
         return host, resolve, rail, (tier, a if tier > 0 else 0, scores[host])
 
     def orientation(self, ref, hostnet, side, layer, host=None):
@@ -1039,15 +1131,20 @@ class Placer:
         w, h = ob[2] - ob[0], ob[3] - ob[1]
         b = (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
         if not self.allowed(ref, b, layer):
+            if ref == DEBUG_REF and self.debug_shown < 12:
+                self.debug_shown += 1; print(f"   {ref} refused at ({cx:.1f},{cy:.1f}) rot {rot} on {layer}: {self.why_not(ref, b, layer)}")
             return False
         self.pose(ref, cx - (ob[0] + ob[2]) / 2, cy - (ob[1] + ob[3]) / 2, rot, layer)
         return True
 
-    def place_in_rings(self, ref, host, point, hostnet, layer, rings=None):
+    def place_in_rings(self, ref, host, point, hostnet, layer, rings=None, sides=()):
         hb = self.box_of(host)
-        base = -L.BOTTOM_TUCK if (layer == "B" and self.side[host] == "F") else L.RING_GAP   # under the host's pin row, or beside it
+        if hb is None:                                             # a parked host has no box: the nearest free spot will do
+            return None
+        gap = L.RING_GAP if self.same_city(ref, host) else L.CITY_GAP   # another city's host: the void between them (3.1)
+        base = -L.BOTTOM_TUCK if (layer == "B" and self.side[host] == "F") else gap   # under the host's pin row, or beside it
         d = {"L": point[0] - hb[0], "R": hb[2] - point[0], "T": point[1] - hb[1], "B": hb[3] - point[1]}
-        for side in sorted(d, key=d.get):                      # nearest side first, the others if it is full
+        for side in list(sides) + [s for s in sorted(d, key=d.get) if s not in sides]:   # the directives' side first, else nearest first
             rot = self.orientation(ref, hostnet, side, layer, host)
             ob = self.origin_box(ref, rot, layer)
             w, h = ob[2] - ob[0], ob[3] - ob[1]
@@ -1055,7 +1152,9 @@ class Placer:
             t = point[1] if side in ("L", "R") else point[0]
             lo, hi = (hb[1], hb[3]) if side in ("L", "R") else (hb[0], hb[2])
             ringlist = self.rings[(host, side, layer)]
-            for slide, ri in [(s, r) for s in L.RING_SLIDES for r in range(rings or L.RINGS)]:
+            order = ([(s, r) for r in range(rings or L.RINGS) for s in L.RING_SLIDES] if side in sides   # a directed side: along it first, then out
+                     else [(s, r) for s in L.RING_SLIDES for r in range(rings or L.RINGS)])
+            for slide, ri in order:
                 if ri >= len(ringlist):
                     ringlist.append({"depth": 0.0, "members": []})
                 ring = ringlist[ri]
@@ -1110,13 +1209,18 @@ class Placer:
                     best = (ref, got)
             if best is None:
                 break
-            ref, (host, resolve, hostnet, _) = best
+            ref, (host, resolve, hostnet, prio) = best
             point = resolve()
+            if ref == DEBUG_REF:
+                print(f"{ref}: chosen with priority {prio} (host {host}); {len(self.order)} satellites down before it")
+            if ref not in self.city_of and host in self.city_of:   # a lone part joins its host's city (3.1)
+                self.city_of[ref] = self.city_of[host]
             layer = "B" if self.bottom_ok(ref, host) else "F"
+            sides = (L.REGULATORS[host]["sw"],) if host in L.REGULATORS and hostnet == self.reg_nets[host]["sw"] and "sw" in L.REGULATORS[host] else ()
             how = None
             if layer == "B" and not self.has_specific(ref):        # decoupling stays on its IC's side unless its first rings are full
-                how = self.place_in_rings(ref, host, point, hostnet, "F", rings=2)
-            how = how or self.place_in_rings(ref, host, point, hostnet, layer)
+                how = self.place_in_rings(ref, host, point, hostnet, "F", rings=2, sides=sides)
+            how = how or self.place_in_rings(ref, host, point, hostnet, layer, sides=sides)
             if not how and layer == "B":                           # no ring under the pin: near it on the bottom, else beside it on top
                 how = self.place_nearest(ref, point, hostnet, "B", radius=8.0) or self.place_in_rings(ref, host, point, hostnet, "F")
             how = how or self.place_nearest(ref, point, hostnet, layer) or (layer == "B" and self.place_nearest(ref, point, hostnet, "F"))
@@ -1132,8 +1236,10 @@ class Placer:
         self.parked += unplaced
         for ref in self.parked:                                    # the nearest free spot to the spare area, anywhere
             self.side.pop(ref, None)
-            if not self.place_nearest(ref, L.SPARE, None, "F", radius=200.0):
+            how = self.place_nearest(ref, L.SPARE, None, "F", radius=200.0)
+            if not how:
                 ob = self.origin_box(ref, 0); self.pose(ref, L.SPARE[0] - ob[0], L.SPARE[1] - ob[1], 0)
+            self.order = [(r, h, self.side[ref], f"parked, then {how or 'SPARE'}") if r == ref else (r, h, s, w) for r, h, s, w in self.order]
 
     def relax(self):
         """Residual courtyard overlaps between movable parts on a side: nudge the later one apart where allowed."""
@@ -1387,6 +1493,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
                 rule_area(f"corner_{ref}_{i}", rect_outline(a, b, cc, d))
     for region in L.ISOLATION_REGIONS:                     # named for the .kicad_dru rules, which keep board nets out by class
         rule_area(region["name"], region["outline"], footprints=False, tracks=False, vias=False, fills=False)
+    for name, (a, b, cc, d) in L.COPPER_VOIDS.items():        # no plane or pour on any layer (under a jack's magnetics): section 4; the pins' tracks pass
+        rule_area(f"void_{name}", rect_outline(a, b, cc, d), footprints=False, tracks=False, vias=False, fills=True)
     for i, (name, box) in enumerate(P.lanes):              # parts stay out of a lane on both sides; its copper goes through
         rule_area(f"lane_{name}_{i}", rect_outline(*box), layers=("F.Cu", "B.Cu"), footprints=True, tracks=False, vias=False, fills=False)
     # ---- planes from the directives (drawn as single outlines: a zone outline with a hole does not fill), and each
@@ -1474,8 +1582,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
         f.write("part   host   side  where (side+ring, or free@distance from the pin)\n")
         for ref, host, layer, how in P.order:
             f.write(f"{ref:6s} {host:6s} {layer:5s} {how}\n")
-        f.write(f"\nislands (layout.md 3.1): the schematic's islands with two or more parts, connectors and holes aside; the spread is the\n"
-                f"farthest member from the island's centre on the board, and members more than {L.ISLAND_SPREAD:g} mm out are listed\n")
+        f.write(f"\ncities (layout.md 3.1): the schematic's islands with two or more parts, connectors, holes and ESD aside: each one's extent on\n"
+                f"the board, and the members more than {L.ISLAND_SPREAD:g} mm from every other member (placed apart from their city)\n")
         apart = []
         hostof = {ref: host for ref, host, _, _ in P.order}
         def follows_island(r):                                     # connectors, holes and ESD at a connector (3.8) are not held to their island
@@ -1485,12 +1593,25 @@ def main(directives=None, out=None, project=None, house_fp=None):
             if len(members) < 2:
                 continue
             pts = {r: (P.fps[r].GetPosition().x / 1e6, P.fps[r].GetPosition().y / 1e6) for r in members}
-            cx = sorted(x for x, _ in pts.values())[len(pts) // 2]; cy = sorted(y for _, y in pts.values())[len(pts) // 2]
-            dist = {r: math.hypot(x - cx, y - cy) for r, (x, y) in pts.items()}
+            dist = {r: min(math.hypot(x - x2, y - y2) for r2, (x2, y2) in pts.items() if r2 != r) for r, (x, y) in pts.items()}   # to the nearest fellow member
+            xs = [x for x, _ in pts.values()]; ys = [y for _, y in pts.values()]
             far = sorted((r for r in members if dist[r] > L.ISLAND_SPREAD), key=natural); apart += far
-            f.write(f"{iid:26s} {len(members):3d} parts  spread {max(dist.values()):5.1f} mm" + (f"  apart: {' '.join(f'{r}@{dist[r]:.0f}' for r in far)}" if far else "") + "\n")
+            f.write(f"{iid:26s} {len(members):3d} parts  {max(xs) - min(xs):5.1f} x {max(ys) - min(ys):5.1f} mm" + (f"  apart: {' '.join(f'{r}@{dist[r]:.0f}' for r in far)}" if far else "") + "\n")
+        narrow = []                                                # the voids: the gap between every two parts of different cities
+        placed = [(r, layer, bx) for layer in ("F", "B") for r, bx in P.boxes[layer].items() if not P.exempt(r)]
+        for i, (ra, la, ba) in enumerate(placed):
+            for rb, lb, bb in placed[i + 1:]:
+                if P.same_city(ra, rb):
+                    continue
+                g = max(max(bb[0] - ba[2], ba[0] - bb[2]), max(bb[1] - ba[3], ba[1] - bb[3]))
+                if g < L.CITY_GAP - 0.01:
+                    narrow.append((g, ra, rb))
+        narrow.sort()
+        f.write(f"\nvoids (layout.md 3.1): every two parts of different cities keep {L.CITY_GAP:g} mm, both sides; narrower gaps:\n" +
+                ("".join(f"  {ra}-{rb} {g:.2f} mm\n" for g, ra, rb in narrow) if narrow else "  none\n"))
     n_isl = sum(1 for _, (s, refs, _) in P.islands.items() if sum(1 for r in refs if follows_island(r)) >= 2)
-    print(f"islands: {n_isl} with two or more parts; parts placed apart from their island (> {L.ISLAND_SPREAD:g} mm): {' '.join(sorted(set(apart), key=natural)) or '-'}")
+    print(f"cities: {n_isl} with two or more parts; parts placed apart from their city (> {L.ISLAND_SPREAD:g} mm from every other member): {' '.join(sorted(set(apart), key=natural)) or '-'}")
+    print(f"voids: {L.CITY_GAP:g} mm between cities; gaps narrower than that: {len(narrow)}" + (f" ({' '.join(f'{ra}-{rb} {g:.1f}' for g, ra, rb in narrow[:8])})" if narrow else ""))
     majors_omitted = [r for r in omitted if kind(r) != 'passive']
     print(f"silkscreen: {len(fps) - len(L.HOLES) - len(omitted)} designators placed, {len(omitted)} omitted "
           f"({sum(1 for r in omitted if P.side[r] == 'B')} on the bottom)"

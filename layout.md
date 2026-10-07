@@ -144,23 +144,30 @@ honoured exactly and the start is reproducible:
    every other lane; it checks that the P member leaves one end on the same
    side it arrives at the other, and refuses the lane otherwise, since a
    crossing is fixed in the schematic (section 3.8), not in copper.
-6. **Every other part is placed at the pin it serves, with its island.**
-   The islands are read from the sheets (3.1): symbols whose bodies, grown
-   by 3 mm, touch, or that a wire joins while their bodies lie within 25 mm
-   of each other (a supply bus or a long wire across the sheet joins areas,
-   not an island; a label joins nothing), transitively, power symbols
-   aside. A part's host is the placed part it shares the most specific nets
-   with (two-node nets count for most, planes for little, a connector or an
-   IC for more than a passive, a member of its own island for more than
-   one on the same sheet, current-carrying and pair classes for more
-   still); once a member of its island that it shares a net with is placed,
-   only island members are candidates, and a member waits while its
-   island's hub is not down. An IC is never hosted by a passive while a
-   connector or an IC will do; an ESD part's connector outranks its island.
-   A part whose nets are all planes (a decoupling or bulk capacitor)
-   belongs to the IC the schematic draws it beside (waiting for it if it is
-   not down yet), at that IC's next free pin on the rail, a capacitor never
-   to another capacitor outside its own island. The attachment point is the host's
+6. **Every other part is placed at the pin it serves, in its city.** The
+   islands are read from the sheets (3.1): symbols a wire joins (a pin end
+   on a wire's end, on its run, or on another pin), transitively, plus
+   symbols whose bodies, grown by 3 mm, touch; a label joins nothing; power
+   symbols and parts without a footprint are not members (`ISLAND_REACH`
+   caps the body distance a wire may bridge, unlimited by default). The
+   regulators of `REGULATORS` go first, as 3.1 says, their SW and VIN pins
+   found by the schematic's pin names (or named in the directive). A part's
+   host is the placed part it shares the most specific nets with (two-node
+   nets count for most, planes for little, a connector or an IC for more
+   than a passive, a member of its own island for more than one on the same
+   sheet, current-carrying and pair classes for more still); once a member
+   of its island that it shares a net with is placed, only island members
+   are candidates, and a member waits while its island's hub is not down.
+   An IC is never hosted by a passive while a connector or an IC will do; an
+   ESD part's connector outranks its island. A part whose nets are all
+   planes (a decoupling or bulk capacitor) belongs to the IC the schematic
+   draws it beside (waiting for it if it is not down yet), at that IC's next
+   free pin on the rail, a capacitor never to another capacitor outside its
+   own island. Every spot a part is tried at keeps the packing margin to its
+   own city and the void to every other city, on both sides, and a ring on
+   another city's host starts the void away from it; the fixed parts are
+   checked against the same rule, so two anchors of different cities closer
+   than the void are refused. The attachment point is the host's
    pads on the shared nets; the part goes on the host's side nearest that
    point, a two-pin part turned so the pad on the host's net faces it, the
    parts along a side packed outward in rings (a bulk capacitor behind the
@@ -175,11 +182,11 @@ honoured exactly and the start is reproducible:
    to the nearest free spot to its pin; the generator reports every part it
    could not keep within 8 mm of its pin, and a placement report beside the
    board file (`placement.txt`) records each part's host and ring, then
-   each island's spread on the board (the farthest member from its centre)
-   and the members placed more than 15 mm out. Those far parts, the
-   members placed apart from their island, and the indicator LEDs (which
-   belong where they can be seen, not at the pin that drives them), are the
-   first hand work.
+   each city's extent on the board with the members placed more than 10 mm
+   from every other member, then every gap between two cities narrower than
+   the void. Those far parts, the members placed apart from their city, and
+   the indicator LEDs (which belong where they can be seen, not at the pin
+   that drives them), are the first hand work.
 7. Planes are drawn as zones (the ground plane on L2, the rails as regions
    of L3 with the base rail underneath at the lowest priority, an isolated
    ground island where there is one), stopping a millimetre short of the
@@ -264,22 +271,37 @@ follows the next routing.
   power and RF are physically separate; high-speed signals do not cross
   low-speed zones; the parts of one block sit together, the block next to
   the connector it serves.
-- **The board mimics the schematic's islands.** Parts drawn together on one
-  sheet, in one area (an IC with the parts fanned out from its pins, a
-  transistor with its base and pull-down resistors, a crystal with its load
-  capacitors, a row of straps), are placed together on the board: the
-  island's hub (its member with the most pins) goes down first, at the
-  placed part it shares the most nets with, and every other member is
-  placed at a member of its own island that it shares a net with, waiting
-  for the hub rather than taking a host elsewhere. A schematic drawn by
-  [schematic-style.md](schematic-style.md) makes this the rule for free:
-  what is fanned out from a part sits by it; what leaves an island by a
-  label belongs to the island it lands in. Connectors are exempt: they sit
-  where the edge table puts them, and an island drawn around a receptacle
-  comes to the receptacle, not the other way round; an ESD part keeps its
-  connector (3.8) whatever island it is drawn in. The generator reads the
-  islands from the sheets (section 2, step 6) and reports each island's
-  spread on the board.
+- **The schematic's islands are cities on the board.** An island is what a
+  sheet joins by wires: a part and everything fanned out from its pins,
+  down the last capacitor hung from its supply bus (the wires are its
+  streets). A label is a road out of town: what leaves an island by name
+  belongs to the island it lands in. On the board each island is a city,
+  its parts packed together, and between any two cities lies a **void of
+  2 mm** (directive `CITY_GAP`) on both sides of the board where no part of
+  either stands: the roads, the routing between the blocks, run in the
+  voids. The island's hub (its member with the most pins) goes down first,
+  at the placed part it shares the most nets with, and every other member
+  is placed at a member of its own city that it shares a net with, waiting
+  for the hub rather than taking a host elsewhere. Outside the cities stand
+  the connectors (they sit where the edge table puts them, and a city drawn
+  around a receptacle comes to the receptacle), the holes, the ESD parts
+  (3.8: at the connector, whatever island drew them) and a lone symbol
+  hosted by a connector; a lone symbol hosted by a city's part joins that
+  city. A schematic drawn by [schematic-style.md](schematic-style.md) gives
+  these islands for free. The generator reads them from the sheets (section
+  2, step 6) and reports each city's extent, its members placed apart from
+  it, and every gap between cities narrower than the void.
+- **A regulator is the strictest city**, and sits at its input: the bucks
+  at the inlet connector, a point-of-load regulator at the rail it draws
+  from. Its city is its datasheet's typical application (input ceramics,
+  catch diode or low-side switch, inductor, output capacitors, bootstrap,
+  feedback, compensation, timing), placed before every other satellite on
+  the board so nothing else takes its ground: the inductor and the catch
+  diode first, on the side the directives name for the SW pin (`REGULATORS`,
+  "the loop flows right"), filled along that side before stepping out so
+  the diode stands beside the inductor at the pin; then the input
+  capacitors at VIN, smallest nearest; then the output capacitors at the
+  inductor's output, smallest nearest; then the rest at their pins.
 
 ### 3.2 The ICs' own guidelines
 
@@ -424,7 +446,10 @@ assembler is consulted on double-sided reflow before the first order.
 - Planes stop short of the board edge by the fab's copper-to-edge minimum
   plus a margin, and clear the mounting holes and their standoff pads.
 - No copper under crystals, under the magnetics side of an Ethernet jack, or
-  under an isolation barrier.
+  under an isolation barrier. The generator draws the directives'
+  `COPPER_VOIDS` as rule areas on every copper layer that no plane or pour
+  enters (a jack whose pins span its body gets the whole body; its pins'
+  tracks still pass).
 
 ## 5. Routing
 
