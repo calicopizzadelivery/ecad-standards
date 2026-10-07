@@ -45,7 +45,7 @@ Tailorings, all recorded in the project's directives:
 | 14.3.2 c | no components within 5 mm of the edge | edge connectors are at the edge by design; other parts keep 3 mm, the assembler consulted |
 | 14.3.1 Table 14-1 A1 | tracks 0.7 mm from the edge | kept; planes and pads 0.25 mm (A6), as the fab allows |
 | 13.6.2 b | tracks ≤ 5 °C rise preferred | 10 °C (13.6.2 a) is the design figure; the classes' widths come from it |
-| 14.3.2 Table 14-2 B1 | 0.6 mm between bodies | met as KiCad courtyards (0.25 mm each side) plus a 0.25 mm packing margin, so two parts' silk outlines (drawn at the courtyard edge) never touch |
+| 14.3.2 Table 14-2 B1 | 0.6 mm between bodies | met as KiCad courtyards (0.25 mm each side) plus a 0.15 mm packing margin: 0.65 mm pad to pad, and two parts' silk outlines (drawn at the courtyard edge) never touch (measured practice, section 9: 0.3 to 0.6 mm) |
 
 ## 1. Entering layout: the project directives
 
@@ -224,7 +224,10 @@ decoupling and RBIAS return, an ESD array on the same layer as the pair.
 - **A capacitor sits at the pin it buffers.** The smallest value is closest
   to the pin, the bulk capacitor behind it, the ground return through a via
   beside the capacitor's ground pad, not through a trace. A capacitor that
-  cannot reach its pin is not that pin's capacitor.
+  cannot reach its pin is not that pin's capacitor. It sits on the IC's own
+  side of the board unless the first two rings there are full (measured
+  practice, section 9: 2 to 2.4 mm from the pin, on the same side nine
+  times in ten even on two-sided boards).
 - One capacitor per supply pin where the datasheet gives one per pin; shared
   bulk where it says shared.
 - Regulators: the input capacitor, switch, catch diode, inductor and output
@@ -273,9 +276,12 @@ Small parts of the remaining kinds (resistors, capacitors, small diodes and
 transistors, up to the courtyard area the directives give) may go to the
 bottom, **under the pin they serve**, through a via pair at their pads: a
 decoupling capacitor under its supply pin is that pin's capacitor when the
-top is full. Nothing goes under an exposed pad's via field, within the
-hand-soldering margin of a through-hole pad, or taller than the standoffs
-allow. The corner keep-outs, the edge zone, the lanes and the isolation
+top is full. A bottom part tucks about 1.75 mm inside the IC's courtyard
+edge, under its pin row, and keeps 0.5 mm from through-hole pads (both
+measured, section 9; wave or selective soldering needs the assembler's own
+figure). Nothing goes under an exposed pad's via field or stands taller
+than the standoffs allow. On two-sided boards in practice about half the
+parts and two thirds of the passives are underneath. The corner keep-outs, the edge zone, the lanes and the isolation
 rule apply on both sides. The point of the bottom is the top: the area it
 frees is for the blocks' copper zones (section 4), not for more parts. The
 assembler is consulted on double-sided reflow before the first order.
@@ -349,8 +355,10 @@ assembler is consulted on double-sided reflow before the first order.
   pad or via or mask opening, not the board edge. KiCad's silk checks
   (`silk_overlap`, `silk_over_copper`, `silk_edge_clearance`) are part of the
   final gate and read zero.
-- **Reference designators are sized to fit**: 1.0 mm text with a 0.15 mm
-  stroke by default, 0.8 mm where space is short and never smaller; placed
+- **Reference designators are sized to fit**: 0.8 mm text with a 0.12 mm
+  stroke by default, 0.7 mm with a 0.1 mm stroke where space is short and
+  never smaller (measured practice, section 9: 0.8 mm typical, 0.65 to
+  0.72 mm the smallest in use; the fab's silk minimum is 0.1 mm); placed
   next to the part outside its courtyard, reading in one of two directions
   across the board.
 - **Where density defeats that, designators are omitted, deliberately.**
@@ -406,3 +414,39 @@ directives before the next starts.
    nothing routed under them.
 6. **Silkscreen and fabrication**: section 6, then the stackup and
    controlled-impedance notes in the fab drawing.
+
+## 9. Measured practice
+
+The numbers in this standard are checked against boards other people laid
+out well. The baseboard project mirrors them locally
+(`scripts/reference-boards.txt`, `scripts/fetch-reference-boards.sh`) and
+measures them with `scripts/harvest-placement.py`, which reads each board
+with `pcbnew` and reports, per board, the decoupling capacitors' distance
+from their supply pin and whether they share the IC's side, the ESD parts'
+distance from their connector, the crystals' from their IC, the nearest
+pad-to-pad gap, the parts' distance from the edge, how far bottom parts
+tuck under an IC and keep from through-hole pads, the designators'
+visibility and size, and the track widths. The method and the table are in
+the project's `docs/reference-boards.md`; the medians that set the rules
+above (2026-10-06, 79 boards: Olimex 48, MNT Reform 14, SparkFun 14,
+Raspberry Pi 3):
+
+| Measure | Reference boards (median; two-sided boards) | This standard |
+|---|---|---|
+| Decoupling, pad to supply pin | 2.4 mm (2.0) | at the pin, first ring |
+| Decoupling on the IC's side | 100 % (89 %) | the IC's side first |
+| Pad-to-pad gap, 10th percentile | 0.34 mm (0.30) | 0.65 mm (courtyards + 0.15) |
+| Parts to the board edge, minimum | 0.73 mm (0.65); SparkFun 2.9 | 3 mm (ECSS tailoring, the assembler consulted) |
+| Bottom parts tucked under an IC | 1.8 mm | 1.75 mm |
+| Bottom parts to through-hole pads | 0.5 mm | 0.5 mm |
+| Parts on the bottom, two-sided boards | 55 % (passives 63 %, ICs 33 %) | small passives, section 3.7 |
+| Designators visible | 92 % (SparkFun hides all) | all that fit, section 6 |
+| Designator height | 0.8 mm typical, 0.65-0.72 smallest | 0.8 / 0.7 mm |
+| ESD part to its connector | 3.5-6.8 mm | at the connector, first ring |
+| Crystal to its IC | 5.9 mm | at the IC, first ring |
+| Courtyard area over board area | 54 % (76 %) | a density to expect |
+
+A rule that practice contradicts is either changed here with the number,
+or kept with its reason stated (the edge zone keeps the parent's conveyor
+allowance). Rerun the harvest when the mirror grows; a new project checks
+its own board against the table with the same script.
