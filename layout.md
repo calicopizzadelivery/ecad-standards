@@ -164,9 +164,10 @@ honoured exactly and the start is reproducible:
    are candidates, and a member waits while its island's hub is not down.
    An IC is never hosted by a passive while a connector or an IC will do; an
    ESD part's connector outranks its island; a crystal's load capacitors
-   are its, placed right after it at its ends (section 5), and a decoupling
-   capacitor lies across its power trace (3.3), facing the pin only where
-   that finds no room. A part whose nets are all
+   are its, placed right after it at its ends (section 5); a button's
+   debounce and pull-up parts are the button's, wherever the directives put
+   it; and a decoupling capacitor lies across its power trace (3.3), facing
+   the pin only where that finds no room. A part whose nets are all
    planes (a decoupling or bulk capacitor) belongs to the IC the schematic
    draws it beside (waiting for it if it is not down yet), at that IC's next
    free pin on the rail, a capacitor never to another capacitor outside its

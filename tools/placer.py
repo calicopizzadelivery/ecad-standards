@@ -1112,6 +1112,9 @@ class Placer:
         crystal = [hr for hr in scores if prefix(hr) == "Y" and any(net not in self.plane for _, net in shared[hr])]
         if prefix(ref) == "C" and crystal:                         # a load capacitor belongs to its crystal (layout.md 5), not to the IC's pin
             scores = collections.Counter({hr: scores[hr] for hr in crystal})
+        button = [hr for hr in scores if prefix(hr) == "SW" and any(net not in self.plane for _, net in shared[hr])]
+        if prefix(ref) in ("R", "C") and button:                   # a button's debounce and pull-up parts are the button's, wherever it sits
+            scores = collections.Counter({hr: scores[hr] for hr in button})
         esd_at_conn = self.is_esd(ref) and any(kind(hr) == "conn" for hr in scores)   # 3.8 outranks 3.1: ESD stays at its connector
         if esd_at_conn:
             scores = collections.Counter({hr: s for hr, s in scores.items() if kind(hr) == "conn"})
