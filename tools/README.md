@@ -65,7 +65,8 @@ width and gap, matched in length, and the lane is refused if the P member
 would cross the N member between its ends (the array's channels then swap
 in the schematic, layout.md 3.8). Tunables: `ESCAPE_WIDTH`, `ESCAPE_LENGTH`,
 `THT_STUB`, `DIRECT_STUB`, `CHAMFER`, `VIA_PAIR_OFFSET`, `BRIDGE_DEPTHS`,
-`MATCH_TOLERANCE`, `BUMP_HEIGHT`, `BUMP_WIDTH`.
+`MATCH_TOLERANCE`, `BUMP_HEIGHT`, `BUMP_WIDTH`. Read by `copper.py` rather
+than the placer: `FLOODS`, `STITCH`, `STITCH_VIA`.
 
 `PLANES` entries take an optional fifth item, the zone priority, so rail
 regions on one layer carve a base plane under them.
@@ -79,6 +80,26 @@ planes), runs FreeRouting headless, imports the session and writes the board
 in canonical order. One thread on purpose: FreeRouting's multi-threaded
 optimiser produces clearance violations. Run it once after the placer; the
 board file is the source of truth from then on.
+
+## copper.py: the copper after routing (layout.md section 2, step 11)
+
+    tools/copper.py OUT_DIR/PROJECT.kicad_pcb gen/layout.py [--no-stitch]
+
+draws the ground floods of the directives' `FLOODS` (`(name, net, layer,
+outline)`: both outer layers from the plane's notched outline, the isolated
+region's own ground inside it) at priority 0 with thermal reliefs, then
+places the stitching vias of `STITCH` (a list of `{"net", "pitch",
+"margin"` from the edge, `"keep_out"` rectangles, or `"inside"` rectangles
+for a region's own ground`}`; `STITCH_VIA` the via size, 0.6 / 0.3 by
+default): on the grid point or at the nearest clear spot within half a
+pitch, clear of pads, tracks and vias by 0.3 mm, out of every via
+keep-out, never within the fill's minimum width of another net's zone
+edge; then it fills the zones and drops any via that cut a new island off
+another net's zone. Idempotent: a flood that exists by name is kept, and a
+via of the net within half a pitch of a grid point counts as that point, so
+it reruns over a board whose routing has changed. Writes the board in
+canonical order and runs the DRC gate. It is the last generated step before
+the hand pass.
 
 ## harvest.py: measured practice (layout.md section 9)
 

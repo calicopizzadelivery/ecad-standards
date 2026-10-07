@@ -76,6 +76,11 @@ The directives state:
 - **Lanes**: a corridor reserved for each high-current path, and for each
   controlled-impedance pair once the pairs are placed: the pads it joins,
   its legs, its layer. Its width follows from the class (section 5).
+- **Floods and stitching**: the ground that floods each outer layer and the
+  outline it fills (the plane's, notched around any isolated region), the
+  isolated region's own ground flood inside the notch, and the stitching
+  grid: its pitch, the margin from the edge, the rectangles the vias keep
+  out of (an isolated region grown by its creepage) or stay inside.
 - **Special considerations**: controlled-impedance pairs and their class,
   high-current paths and their class and width, the reference plane each
   signal class needs unbroken under it, thermal paths for the regulators,
@@ -184,7 +189,21 @@ honoured exactly and the start is reproducible:
    session comes back and the board is written in canonical order. What the
    autorouter leaves unrouted or in violation is finished by hand in KiCad,
    and from then on the board file is the source of truth.
-11. The board file is reproducible like the schematic
+11. **The copper after routing** (`tools/copper.py`, run over the routed
+   board, and again whenever the routing changes: it adds only what is
+   missing). The ground floods of section 4 are drawn on both outer layers
+   from the directives (the plane's notched outline; the isolated region's
+   own ground inside the notch) at the lowest priority with thermal reliefs,
+   and the stitching vias of section 5 are placed from the directives' grid:
+   on the grid point, else at the nearest clear spot within half a pitch,
+   clear of every pad, track and via by the clearance, out of every via
+   keep-out and the directives' rectangles, never within the fill's minimum
+   width of another net's zone edge, and dropped where the fill shows one
+   cut an island off a rail. The DRC gate runs again. A pad the routing
+   crowds so the flood reaches it with one spoke is a starved-thermal
+   warning: the hand pass moves the track or accepts it where the pad has
+   its own via.
+12. The board file is reproducible like the schematic
    ([kicad-generation.md](kicad-generation.md)): `pcbnew` draws random UUIDs
    and writes items in their order, so the generator sorts footprints by
    reference, graphics by content and zones by name, derives every UUID in
@@ -348,7 +367,11 @@ assembler is consulted on double-sided reflow before the first order.
   width 0.2 mm, clearance 0.24 mm.)
 - **Ground floods the outer layers** around the routing, stitched to the
   plane (section 5), so return paths and shielding do not depend on the
-  plane alone. (Practice: ground pours cover about half of each outer
+  plane alone. The floods are standard practice, not a finishing touch: the
+  generator draws them on both outer layers from the directives (section 2,
+  step 11) at the lowest priority, with thermal reliefs, on the plane's
+  outline, notched around any isolated region, which floods its own ground
+  inside the notch. (Practice: ground pours cover about half of each outer
   layer; three to five power pours per board carry the rails.)
 
 - **Planes and power distribution are polygons.** A power net that feeds
@@ -405,7 +428,11 @@ assembler is consulted on double-sided reflow before the first order.
   has a ground plane on an inner layer, most on the one under the top.)
 - **Ground stitching**: the outer ground pours are tied to the plane with
   vias at about four per square centimetre, and a ground via sits beside
-  every signal that changes layer. (Practice: 3 to 5 ground vias per cm².)
+  every signal that changes layer. The generator places the grid (section
+  2, step 11): 5 mm pitch, four per square centimetre, each via moved to
+  the nearest clear spot within half a pitch where the routing is in the
+  way, none within an isolated region's creepage, none cutting a sliver off
+  another net's zone. (Practice: 3 to 5 ground vias per cm².)
 - **Lanes**: a high-current path is routed inside the lane the directives
   drew for it, at the class width, with nothing else in the corridor; a
   pair's lane runs from its receptacle through its ESD array to its IC. A
@@ -477,8 +504,9 @@ directives before the next starts.
 5. **Everything else**, block by block, each block's decoupling against its
    pins before its signals leave it. Crystals last within their block, with
    nothing routed under them. The autorouter does this pass over the locked
-   lanes and the planes (section 2, step 10); the hand pass finishes what it
-   leaves and adds the ground stitching of section 5.
+   lanes and the planes (section 2, step 10) and the copper tool adds the
+   ground floods and stitching (step 11); the hand pass finishes what they
+   leave.
 6. **Silkscreen and fabrication**: section 6, then the stackup and
    controlled-impedance notes in the fab drawing.
 
@@ -521,10 +549,10 @@ Raspberry Pi 3; routing rows from the same boards, the pair rows from the
 | Track length on the bottom layer | 45 % (39 %) | both outer layers route |
 | Track length on inner layers | 3 % (12 %) | planes, a few crossings |
 | Inner ground plane on multilayer boards | all; under the top on most | In1 unbroken ground |
-| Ground vias per cm² | 3.3 (4.2) | about 4 |
+| Ground vias per cm² | 3.3 (4.2) | about 4: a 5 mm grid, less what the routing blocks |
 | Pads to zones by thermal relief | 100 % of zones, 0.5 mm gap and spoke | thermal, 0.5 / 0.5 |
 | Zone minimum width / clearance | 0.2 / 0.24 mm | 0.25 / 0.3 mm |
-| Ground pour share of the outer layers | 44 % | flood around the routing |
+| Ground pour share of the outer layers | 44 % | floods on both outer layers, drawn from the directives |
 | Pair gap / width in the copper (49 boards with pairs) | 0.15 / 0.13 mm | from the stackup (90 Ω) |
 | Pair length mismatch, median / 90th | 0.8 / 1.4 mm | within 1 mm |
 | Pairs on a single layer | 1 in 3; 3 vias per pair | one layer, no vias (parent 13.11) |
