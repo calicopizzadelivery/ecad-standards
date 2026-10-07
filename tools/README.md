@@ -71,8 +71,13 @@ a wire joins two symbols whatever their distance; a number caps the body
 distance it may bridge), `ISLAND_SPREAD` (10.0: a member farther than this
 from every other member of its city on the board is reported), `CITY_GAP`
 (2.0: the void between any two cities' parts, both sides), `REGULATORS`
-(`{ref: {"sw": "L"|"R"|"T"|"B", "sw_pin": name or pad, "in_pin": ...}}`:
-the regulators' cities go first, the inductor and diode on that side),
+(`{ref: {"layout": name, "sw": "L"|"R"|"T"|"B", "sw_pin": name or pad,
+"in_pin": ...}}`: the regulators' cities go first; with a `layout` the
+template below places them, else the inductor and diode go on the `sw`
+side), `LAYOUTS` (`{name: {"source": str, "top_only": bool, "pins": {pin
+name: (side, [kinds outward, "D^" = along the side], start ring)},
+"inductor_out": (side, [kinds])}}`: a datasheet figure transcribed in the
+footprint's own frame; sides turn with the anchor's rotation),
 `COPPER_VOIDS` (`{name: (x0, y0, x1, y1)}`: no plane or pour on any layer,
 tracks and vias pass). Read by `copper.py` rather than the placer:
 `FLOODS`, `STITCH`, `STITCH_VIA`.

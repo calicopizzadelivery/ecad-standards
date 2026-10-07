@@ -151,7 +151,11 @@ honoured exactly and the start is reproducible:
    symbols and parts without a footprint are not members (`ISLAND_REACH`
    caps the body distance a wire may bridge, unlimited by default). The
    regulators of `REGULATORS` go first, as 3.1 says, their SW and VIN pins
-   found by the schematic's pin names (or named in the directive). A part's
+   found by the schematic's pin names (or named in the directive); one with
+   a `LAYOUTS` template (3.2) has each part's side, ring and orientation
+   taken from the figure, the template's pin order setting the placement
+   order and a part on several templated pins taking the most specific one
+   (the bootstrap capacitor goes to BOOT, not SW). A part's
    host is the placed part it shares the most specific nets with (two-node
    nets count for most, planes for little, a connector or an IC for more
    than a passive, a member of its own island for more than one on the same
@@ -307,8 +311,19 @@ follows the next routing.
 
 Most ICs publish a layout section: where their capacitors go, which node
 must be small, what copper the thermal pad needs, what must not pass
-underneath. **Those guidelines are followed on a best-effort basis, and the
-effort is written down.** Before placement, each IC's datasheet layout
+underneath. **Where the datasheet gives a recommended layout or a layout
+example, the part's island is placed to it, exactly.** The directives
+transcribe the figure as a layout template (`LAYOUTS`): for each pin of the
+IC, the side of the IC on which the figure puts the parts hanging from that
+pin and those parts' kinds in order outward (the catch diode along the side
+at SW, the inductor beyond it; the input bypass at VIN; the bootstrap
+capacitor above it; the frequency resistor below; the compensation network
+at COMP with the divider beyond), where the output capacitors sit relative
+to the inductor, and whether the figure keeps everything on the top side.
+The engine places the island from the template in the figure's order, the
+switching loop first, and the figure is cited, with the measured result,
+in the project's layout-guidelines document. **Guidelines without a figure
+are followed on a best-effort basis, and the effort is written down.** Before placement, each IC's datasheet layout
 section (and its evaluation board, as in the reference-design review) is
 read and its rules are entered in the project's layout guideline table
 (`docs/layout-guidelines.md`): the rule, its source, and how the board meets

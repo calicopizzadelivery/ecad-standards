@@ -44,7 +44,7 @@ DEFAULTS = {"EDGE_ZONE": 3.0, "HOLE_CLEAR_R": 4.0, "PACK_MARGIN": 0.15, "RING_GA
             "ESD_VALUES": ("USBLC", "PESD", "ESDA", "TPD", "SRV05", "IP42", "TVS"), "FIXED": {}, "ANCHORS": {},
             "ESCAPE_WIDTH": 0.2, "ESCAPE_LENGTH": 1.2, "CHAMFER": 0.8, "VIA_PAIR_OFFSET": 0.45, "BRIDGE_DEPTHS": (0.8, 1.6), "THT_STUB": 1.0, "DIRECT_STUB": 0.4,
             "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5, "ISLAND_GAP": 6.0, "ISLAND_REACH": None, "ISLAND_SPREAD": 10.0,
-            "CITY_GAP": 2.0, "REGULATORS": {}, "COPPER_VOIDS": {}}
+            "CITY_GAP": 2.0, "REGULATORS": {}, "LAYOUTS": {}, "COPPER_VOIDS": {}}
 
 
 class Directives:
@@ -251,6 +251,12 @@ def sch_islands(gap, reach):
             for r in refs:
                 ref_island[r] = iid
     return ref_island, islands
+
+
+def rot_side(side, deg):
+    """A side of a footprint's own frame (as the library draws it) seen on the board after its rotation."""
+    order = "RTLB"                                                 # a positive (counter-clockwise) quarter turn takes R to T, T to L, ...
+    return order[(order.index(side) + int(round(deg / 90.0))) % 4]
 
 
 def sch_pin_names():
@@ -470,6 +476,19 @@ class Placer:
             self.reg_nets[r] = {"sw": pick("sw_pin", "SW", "LX", "PH", "SW1"), "in": pick("in_pin", "VIN", "PVIN", "IN", "VCC")}
             if not self.reg_nets[r]["sw"]:
                 print(f"regulator {r}: no SW pin found (name it with 'sw_pin' in REGULATORS); pins by name: {sorted(by_name)}")
+        self.pin_names = pin_names
+        self.layout_of = {}                               # regulator -> its datasheet layout template (layout.md 3.2)
+        self.inductor_of = {}                             # regulator -> its inductor (the L on the SW net in its city)
+        for r, cfg in L.REGULATORS.items():
+            if r in self.fps and cfg.get("layout") in L.LAYOUTS:
+                self.layout_of[r] = L.LAYOUTS[cfg["layout"]]
+            sw = self.reg_nets.get(r, {}).get("sw")
+            if r in self.fps and sw:
+                self.inductor_of[r] = next((hr for hr, _ in self.nets[sw] if prefix(hr) == "L"), None)
+        self.top_only = set()                             # cities whose template keeps every part on the top side
+        for r, lay in self.layout_of.items():
+            if lay.get("top_only") and r in self.city_of:
+                self.top_only.add(self.city_of[r])
 
     def has_specific(self, ref):
         return any(n and n not in self.plane and not n.startswith("unconnected-") for _, n in self.pads_of[ref])
@@ -493,6 +512,8 @@ class Placer:
             if net and (self.classes.get(net) in L.BOTTOM_NEVER_CLASSES or net in self.loop):
                 return False
         if host and not self.same_city(ref, host):               # another city's land (3.1): not under its host either
+            return False
+        if self.city_of.get(ref) in self.top_only:                # the datasheet's figure keeps the whole circuit on top (3.2)
             return False
         return not (host and prefix(host) == "Y")
 
@@ -609,7 +630,8 @@ class Placer:
             if ref not in self.fps:
                 problems.append(f"{ref} is anchored but not in the schematic"); continue
             if not self.allowed(ref, self.boxes["F"][ref]):
-                problems.append(f"{ref} stands in a keep-out, the edge zone or on the wrong side of an isolation barrier")
+                b = self.boxes["F"][ref]
+                problems.append(f"{ref} at ({b[0]:.1f}-{b[2]:.1f}, {b[1]:.1f}-{b[3]:.1f}) is refused by: {self.why_not(ref, b, 'F')}")
         for ref, b in self.boxes["F"].items():
             if ref not in L.HOLES and ref not in L.FIXED and any(overlap(b, c) for c in self.corners):
                 problems.append(f"{ref} stands in a corner keep-out")
@@ -1019,6 +1041,39 @@ class Placer:
             self.tracks.append((net_of(p3), other, L.ESCAPE_WIDTH, v3, corner))
             self.tracks.append((net_of(p3), other, L.ESCAPE_WIDTH, corner, v1))
 
+    # ---- the datasheet's layout template (layout.md 3.2)
+    def template_hint(self, host, ref, shared, lay):
+        """Where the template puts this part: the pin it hangs from (the most specific of the templated pins it shares),
+        that pin's side turned with the host, the ring the part's kind takes in the figure's order, whether it lies along
+        the side, and its rank in the placement order (the template's pin order, then the kind's order)."""
+        names = self.pin_names.get(host, {}); pins = lay.get("pins", {})
+        best = None
+        for pad, net in shared:
+            name = names.get(pad)
+            if name in pins and net:
+                nodes = len(self.nets.get(net, ()))
+                if best is None or nodes < best[0]:
+                    best = (nodes, name, net)
+        if best is None:
+            return None
+        _, name, net = best
+        entry = pins[name]; side, order = entry[0], entry[1]; start = entry[2] if len(entry) > 2 else 0
+        kinds = [k.rstrip("^") for k in order]; pk = prefix(ref)
+        role = kinds.index(pk) if pk in kinds else len(kinds)
+        along = pk in kinds and order[role].endswith("^")
+        return {"sides": (rot_side(side, self.fps[host].GetOrientationDegrees()),), "ring": start + (role if pk in kinds else 0),
+                "along": along, "rank": (list(pins).index(name), role), "pin": name}
+
+    def output_hint(self, host, rail):
+        """The output capacitors' place: the template's inductor_out, for a part on the regulator's output rail hosted by its inductor."""
+        for reg, ind in self.inductor_of.items():
+            if ind == host and reg in self.layout_of and "inductor_out" in self.layout_of[reg]:
+                sw = self.reg_nets[reg]["sw"]
+                if rail != sw and rail in {n for _, n in self.pads_of[host]}:
+                    side, order = self.layout_of[reg]["inductor_out"][:2]
+                    return {"sides": (rot_side(side, self.fps[reg].GetOrientationDegrees()),), "ring": 0, "along": False, "rank": (99, 0), "pin": "out"}
+        return None
+
     # ---- hosts
     def best_host(self, ref):
         """(host, attachment-point resolver, the host's net the part should face, priority) for an unplaced part,
@@ -1063,11 +1118,15 @@ class Placer:
             if waiting and tier < 6:
                 tier = 0
             reg = self.regulator_of.get(isl)
-            if reg and ref != reg and not waiting and tier < 6:    # a regulator's city (3.2) is placed before every other satellite: its
-                nets = {net for _, net in specific[host]}          # switching loop (inductor, diode) first, then the rest at their pins
+            if reg and ref != reg and not waiting and tier < 6:    # a regulator's city (3.2) is placed before every other satellite
+                lay = self.layout_of.get(host)
+                hint = self.template_hint(host, ref, specific[host], lay) if lay else None
+                if hint:                                           # the datasheet's figure: its pin order, then its order along the pin
+                    return host, (lambda: (x, y)), specific[host][0][1], (5.9, -hint["rank"][0], -hint["rank"][1], -a), hint
+                nets = {net for _, net in specific[host]}          # no figure: the switching loop (inductor, diode) first, then the rest at their pins
                 tier = 5.9 if self.reg_nets[reg]["sw"] in nets else 5.6
-                return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 5.8 else -a, scores[host])
-            return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 1 else 0, scores[host])
+                return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 5.8 else -a, scores[host]), None
+            return host, (lambda: (x, y)), specific[host][0][1], (tier, a if tier > 1 else 0, scores[host]), None
         # only planes shared (a decoupling or bulk capacitor, or a part waiting for its partner): among the parts
         # on its rail, the one the schematic drew it beside, on the same sheet, an IC counting as nearer than a
         # passive at the same distance, a capacitor never hosted by another capacitor; then its next free pin
@@ -1099,8 +1158,13 @@ class Placer:
         tier = 0 if waiting else 5 if a < L.SMALL_AREA else 3      # small decoupling first of all; bulk after the big parts on the pins
         reg = self.regulator_of.get(isl)
         if reg and ref != reg and not waiting:                     # a regulator's input and output capacitors: smallest nearest the pin, before all
-            return host, resolve, rail, (5.8 if rail == self.reg_nets[reg]["in"] else 5.7, -a, scores[host])
-        return host, resolve, rail, (tier, a if tier > 0 else 0, scores[host])
+            hint = None
+            lay = self.layout_of.get(host)
+            if lay:                                                # the input capacitors: the figure's side for the pin on their rail
+                hint = self.template_hint(host, ref, [(hp, net) for hp, net in pins if net == rail], lay)
+            hint = hint or self.output_hint(host, rail)            # the output capacitors: the figure's place by the inductor
+            return host, resolve, rail, (5.8 if rail == self.reg_nets[reg]["in"] else 5.7, -a, scores[host]), hint
+        return host, resolve, rail, (tier, a if tier > 0 else 0, scores[host]), None
 
     def orientation(self, ref, hostnet, side, layer, host=None):
         """Two-pin parts turn so the pad carrying the host's net faces the host; a flow-through part (an ESD array
@@ -1137,7 +1201,7 @@ class Placer:
         self.pose(ref, cx - (ob[0] + ob[2]) / 2, cy - (ob[1] + ob[3]) / 2, rot, layer)
         return True
 
-    def place_in_rings(self, ref, host, point, hostnet, layer, rings=None, sides=()):
+    def place_in_rings(self, ref, host, point, hostnet, layer, rings=None, sides=(), first_ring=0, along=False):
         hb = self.box_of(host)
         if hb is None:                                             # a parked host has no box: the nearest free spot will do
             return None
@@ -1146,6 +1210,8 @@ class Placer:
         d = {"L": point[0] - hb[0], "R": hb[2] - point[0], "T": point[1] - hb[1], "B": hb[3] - point[1]}
         for side in list(sides) + [s for s in sorted(d, key=d.get) if s not in sides]:   # the directives' side first, else nearest first
             rot = self.orientation(ref, hostnet, side, layer, host)
+            if along and side in sides:                            # the figure lays the part along the side (a diode beside the pin), host pad toward the pin
+                rot = (rot + 90) % 360
             ob = self.origin_box(ref, rot, layer)
             w, h = ob[2] - ob[0], ob[3] - ob[1]
             normal, along = (w, h) if side in ("L", "R") else (h, w)
@@ -1155,12 +1221,14 @@ class Placer:
             order = ([(s, r) for r in range(rings or L.RINGS) for s in L.RING_SLIDES] if side in sides   # a directed side: along it first, then out
                      else [(s, r) for s in L.RING_SLIDES for r in range(rings or L.RINGS)])
             for slide, ri in order:
+                if ri < first_ring and side in sides:
+                    continue
                 if ri >= len(ringlist):
                     ringlist.append({"depth": 0.0, "members": []})
                 ring = ringlist[ri]
                 if ring["members"] and normal > ring["depth"] + 1e-6 and any(rr["members"] for rr in ringlist[ri + 1:]):
                     continue                                       # fatter than this ring, and the outer rings are occupied
-                inner = base + sum(rr["depth"] for rr in ringlist[:ri]) + L.RING_GAP * ri + 0.005
+                inner = base + sum(rr["depth"] for rr in ringlist[:ri]) + L.RING_GAP * ri + 0.005 * (ri + 1)   # a hair of slack per ring: the margin test is exact
                 offset = inner + normal / 2
                 reach = L.RING_REACH
                 for dt in [0] + [sgn * k * 0.5 for k in range(1, int(slide * 2) + 1) for sgn in (1, -1)]:
@@ -1174,7 +1242,17 @@ class Placer:
                     elif side == "R": cx, cy = hb[2] + offset, tt
                     elif side == "T": cx, cy = tt, hb[1] - offset
                     else:             cx, cy = tt, hb[3] + offset
-                    if self.try_box(ref, rot, cx, cy, layer):
+                    r_try = rot
+                    if along and side in sides and len(list(self.fps[ref].Pads())) == 2:
+                        pad = next((p for p in self.fps[ref].Pads() if self.pad_net.get((ref, p.GetNumber())) == hostnet), None)
+                        if pad is not None:                        # the host-net pad toward the pin along the side
+                            o = self.fps[ref].GetOrientationDegrees(); pos = self.fps[ref].GetPosition(); pp = pad.GetPosition()
+                            v = rot_vec(((pp.x - pos.x) / 1e6, (pp.y - pos.y) / 1e6), rot - o)
+                            towards = (t - tt)
+                            comp = v[1] if side in ("L", "R") else v[0]
+                            if towards != 0 and comp * towards < 0:
+                                r_try = (rot + 180) % 360
+                    if self.try_box(ref, r_try, cx, cy, layer):
                         ring["members"].append((ref, iv))
                         ring["depth"] = max(ring["depth"], normal)
                         return f"{side}{ri}"
@@ -1209,18 +1287,22 @@ class Placer:
                     best = (ref, got)
             if best is None:
                 break
-            ref, (host, resolve, hostnet, prio) = best
+            ref, (host, resolve, hostnet, prio, hint) = best
             point = resolve()
             if ref == DEBUG_REF:
-                print(f"{ref}: chosen with priority {prio} (host {host}); {len(self.order)} satellites down before it")
+                print(f"{ref}: chosen with priority {prio} (host {host}, template {hint}); {len(self.order)} satellites down before it")
             if ref not in self.city_of and host in self.city_of:   # a lone part joins its host's city (3.1)
                 self.city_of[ref] = self.city_of[host]
             layer = "B" if self.bottom_ok(ref, host) else "F"
-            sides = (L.REGULATORS[host]["sw"],) if host in L.REGULATORS and hostnet == self.reg_nets[host]["sw"] and "sw" in L.REGULATORS[host] else ()
+            if hint:
+                sides, first_ring, along = hint["sides"], hint["ring"], hint["along"]
+            else:
+                sides = (L.REGULATORS[host]["sw"],) if host in L.REGULATORS and hostnet == self.reg_nets[host]["sw"] and "sw" in L.REGULATORS[host] else ()
+                first_ring, along = 0, False
             how = None
             if layer == "B" and not self.has_specific(ref):        # decoupling stays on its IC's side unless its first rings are full
-                how = self.place_in_rings(ref, host, point, hostnet, "F", rings=2, sides=sides)
-            how = how or self.place_in_rings(ref, host, point, hostnet, layer, sides=sides)
+                how = self.place_in_rings(ref, host, point, hostnet, "F", rings=2, sides=sides, first_ring=first_ring, along=along)
+            how = how or self.place_in_rings(ref, host, point, hostnet, layer, sides=sides, first_ring=first_ring, along=along)
             if not how and layer == "B":                           # no ring under the pin: near it on the bottom, else beside it on top
                 how = self.place_nearest(ref, point, hostnet, "B", radius=8.0) or self.place_in_rings(ref, host, point, hostnet, "F")
             how = how or self.place_nearest(ref, point, hostnet, layer) or (layer == "B" and self.place_nearest(ref, point, hostnet, "F"))
