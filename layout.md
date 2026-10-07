@@ -429,7 +429,7 @@ pad-to-pad gap, the parts' distance from the edge, how far bottom parts
 tuck under an IC and keep from through-hole pads, the designators'
 visibility and size, and the track widths. The method and the table are in
 the project's `docs/reference-boards.md`; the medians that set the rules
-above (2026-10-06, 79 boards: Olimex 48, MNT Reform 14, SparkFun 14,
+above (2026-10-06, 81 boards: Olimex 48, MNT Reform 14, SparkFun 16,
 Raspberry Pi 3):
 
 | Measure | Reference boards (median; two-sided boards) | This standard |
@@ -438,7 +438,7 @@ Raspberry Pi 3):
 | Decoupling on the IC's side | 100 % (89 %) | the IC's side first |
 | Pad-to-pad gap, 10th percentile | 0.34 mm (0.30) | 0.65 mm (courtyards + 0.15) |
 | Parts to the board edge, minimum | 0.73 mm (0.65); SparkFun 2.9 | 3 mm (ECSS tailoring, the assembler consulted) |
-| Bottom parts tucked under an IC | 1.8 mm | 1.75 mm |
+| Bottom parts tucked under an IC | 1.8 to 2.0 mm | 1.75 mm |
 | Bottom parts to through-hole pads | 0.5 mm | 0.5 mm |
 | Parts on the bottom, two-sided boards | 55 % (passives 63 %, ICs 33 %) | small passives, section 3.7 |
 | Designators visible | 92 % (SparkFun hides all) | all that fit, section 6 |
