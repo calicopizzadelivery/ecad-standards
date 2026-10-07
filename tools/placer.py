@@ -430,6 +430,8 @@ class Placer:
         self.loop = {n for n, nodes in nets.items() if any(prefix(r) == "L" for r, _ in nodes)}   # an inductor's nets: a switching loop
         self.boxes = {"F": {}, "B": {}}                   # side -> ref -> courtyard box of every placed part
         self.debug_shown = 0
+        self.ring_side = {}                               # ref -> the side of its host it was placed on (L/R/T/B)
+        self.host_of = {}                                 # ref -> its host
         self.side = {}
         self.under = {}                                   # a top part -> the boxes it denies the bottom (THT pads, EP via field, a crystal)
         self.lanes = []                                   # (name, box) corridors kept free of parts on both sides
@@ -1107,6 +1109,9 @@ class Placer:
             return None
         if kind(ref) == "ic" and any(kind(hr) != "passive" for hr in scores):   # an IC is never hosted by a passive while a connector or IC will do
             scores = collections.Counter({hr: s for hr, s in scores.items() if kind(hr) != "passive"})
+        crystal = [hr for hr in scores if prefix(hr) == "Y" and any(net not in self.plane for _, net in shared[hr])]
+        if prefix(ref) == "C" and crystal:                         # a load capacitor belongs to its crystal (layout.md 5), not to the IC's pin
+            scores = collections.Counter({hr: scores[hr] for hr in crystal})
         esd_at_conn = self.is_esd(ref) and any(kind(hr) == "conn" for hr in scores)   # 3.8 outranks 3.1: ESD stays at its connector
         if esd_at_conn:
             scores = collections.Counter({hr: s for hr, s in scores.items() if kind(hr) == "conn"})
@@ -1124,8 +1129,8 @@ class Placer:
             x = sum(p.x for p in pts) / len(pts) / 1e6; y = sum(p.y for p in pts) / len(pts) / 1e6
             a = self.area[ref]
             tier = (4 if a >= L.BIG_AREA else 2) if kind(host) != "passive" else 1
-            if (self.is_esd(ref) and kind(host) == "conn") or prefix(ref) == "Y":
-                tier = 6                                           # ESD and crystals first of all: a connector's signal pins, an IC's oscillator pins are theirs
+            if (self.is_esd(ref) and kind(host) == "conn") or prefix(ref) == "Y" or (prefix(host) == "Y" and prefix(ref) == "C"):
+                tier = 6                                           # ESD, crystals and their load capacitors first of all: the pins and the crystal's ends are theirs
             if waiting and tier < 6:
                 tier = 0
             reg = self.regulator_of.get(isl)
@@ -1184,6 +1189,8 @@ class Placer:
         with the connector's pair on one pin row and the IC's on the other) turns its host-side row to the host;
         others stay upright."""
         pads = list(self.fps[ref].Pads())
+        if prefix(ref) == "Y":                                     # a crystal lies along the IC's edge, a signal pad at each end (layout.md 5)
+            return 0 if side in ("T", "B") else 90
         ob = self.origin_box(ref, 0, layer); cx, cy = (ob[0] + ob[2]) / 2, (ob[1] + ob[3]) / 2
         if len(pads) == 2:
             near = next((p for p in pads if self.pad_net.get((ref, p.GetNumber())) == hostnet), pads[0])
@@ -1214,7 +1221,7 @@ class Placer:
         self.pose(ref, cx - (ob[0] + ob[2]) / 2, cy - (ob[1] + ob[3]) / 2, rot, layer)
         return True
 
-    def place_in_rings(self, ref, host, point, hostnet, layer, rings=None, sides=(), first_ring=0, along=False):
+    def place_in_rings(self, ref, host, point, hostnet, layer, rings=None, sides=(), first_ring=0, along=False, toward=None):
         hb = self.box_of(host)
         if hb is None:                                             # a parked host has no box: the nearest free spot will do
             return None
@@ -1224,7 +1231,7 @@ class Placer:
         d = {"L": point[0] - hb[0], "R": hb[2] - point[0], "T": point[1] - hb[1], "B": hb[3] - point[1]}
         for side in list(sides) + [s for s in sorted(d, key=d.get) if s not in sides]:   # the directives' side first, else nearest first
             rot = self.orientation(ref, hostnet, side, layer, host)
-            if along and side in sides:                            # the figure lays the part along the side (a diode beside the pin), host pad toward the pin
+            if along and (not sides or side in sides):             # the part lies along the side (a diode beside the pin, a capacitor across its trace), host pad toward the pin
                 rot = (rot + 90) % 360
             ob = self.origin_box(ref, rot, layer)
             w, h = ob[2] - ob[0], ob[3] - ob[1]
@@ -1257,17 +1264,22 @@ class Placer:
                     elif side == "T": cx, cy = tt, hb[1] - offset
                     else:             cx, cy = tt, hb[3] + offset
                     r_try = rot
-                    if along and side in sides and len(list(self.fps[ref].Pads())) == 2:
+                    if along and (not sides or side in sides) and len(list(self.fps[ref].Pads())) == 2:
                         pad = next((p for p in self.fps[ref].Pads() if self.pad_net.get((ref, p.GetNumber())) == hostnet), None)
-                        if pad is not None:                        # the host-net pad toward the pin along the side
+                        if pad is not None:                        # the host-net pad toward the pin along the side (or toward a given point)
                             o = self.fps[ref].GetOrientationDegrees(); pos = self.fps[ref].GetPosition(); pp = pad.GetPosition()
                             v = rot_vec(((pp.x - pos.x) / 1e6, (pp.y - pos.y) / 1e6), rot - o)
-                            towards = (t - tt)
-                            comp = v[1] if side in ("L", "R") else v[0]
-                            if towards != 0 and comp * towards < 0:
-                                r_try = (rot + 180) % 360
+                            if toward is not None:
+                                d0 = math.hypot(cx + v[0] - toward[0], cy + v[1] - toward[1]); d1 = math.hypot(cx - v[0] - toward[0], cy - v[1] - toward[1])
+                                if d1 < d0:
+                                    r_try = (rot + 180) % 360
+                            else:
+                                towards = (t - tt)
+                                comp = v[1] if side in ("L", "R") else v[0]
+                                if towards != 0 and comp * towards < 0:
+                                    r_try = (rot + 180) % 360
                     if self.try_box(ref, r_try, cx, cy, layer):
-                        ring["members"].append((ref, iv))
+                        ring["members"].append((ref, iv)); self.ring_side[ref] = side
                         ring["depth"] = max(ring["depth"], normal)
                         return f"{side}{ri}"
         return None
@@ -1318,10 +1330,26 @@ class Placer:
                     hb = self.box_of(host)
                     edge = min({"L": hb[0], "R": W - hb[2], "T": hb[1], "B": H - hb[3]}.items(), key=lambda kv: kv[1])[0]
                     sides = ({"L": "R", "R": "L", "T": "B", "B": "T"}[edge],)
+            toward = None
+            if prefix(host) == "Y" and prefix(ref) == "C" and self.has_specific(ref) and host in self.ring_side and host in self.host_of:
+                yside = self.ring_side[host]; ic = self.host_of[host]      # a crystal's load capacitor (layout.md 5): at the end of the crystal nearer its own
+                pad = next((p for p in self.fps[host].Pads() if self.pad_net.get((host, p.GetNumber())) == hostnet), None)   # pad, across the IC's edge,
+                if pad is not None and ic in self.fps:                      # its signal pad on the trace from that pad to the IC's pin
+                    yb = self.box_of(host); px, py = pad.GetPosition().x / 1e6, pad.GetPosition().y / 1e6
+                    end = ("L" if px < (yb[0] + yb[2]) / 2 else "R") if yside in ("T", "B") else ("T" if py < (yb[1] + yb[3]) / 2 else "B")
+                    sides, first_ring, along, point = (end,), 0, True, (px, py)
+                    icpad = next((p for p in self.fps[ic].Pads() if self.pad_net.get((ic, p.GetNumber())) == hostnet), None)
+                    if icpad is not None:
+                        toward = (icpad.GetPosition().x / 1e6, icpad.GetPosition().y / 1e6)
+            prefer_along = False
+            if prefix(ref) == "C" and not self.has_specific(ref) and kind(host) == "ic" and not hint and not along:
+                along = prefer_along = True                        # decoupling lies across its power trace (3.3): along the IC's edge, power pad nearest the pin
             how = None
             if layer == "B" and not forced and not self.has_specific(ref) and self.side[host] == "F":   # decoupling stays on its IC's side unless its first rings are full
-                how = self.place_in_rings(ref, host, point, hostnet, "F", rings=2, sides=sides, first_ring=first_ring, along=along)
-            how = how or self.place_in_rings(ref, host, point, hostnet, layer, sides=sides, first_ring=first_ring, along=along)
+                how = self.place_in_rings(ref, host, point, hostnet, "F", rings=2, sides=sides, first_ring=first_ring, along=along, toward=toward)
+            how = how or self.place_in_rings(ref, host, point, hostnet, layer, sides=sides, first_ring=first_ring, along=along, toward=toward)
+            if not how and prefer_along:                           # no room across the trace at this pin: the capacitor faces the pin instead
+                how = self.place_in_rings(ref, host, point, hostnet, layer, sides=sides, first_ring=first_ring)
             if forced:                                             # a directed side is kept: the nearest free spot on it
                 how = how or self.place_nearest(ref, point, hostnet, layer)
             else:
@@ -1332,7 +1360,7 @@ class Placer:
                 print(f"{ref}: host {host} at {point[0]:.1f},{point[1]:.1f} facing {hostnet}, side {layer}: {how}; placed as number {len(self.order) + 1}; "
                       f"spots rejected by: {dict(self.debug.most_common(8))}")
             if how:
-                self.order.append((ref, host, self.side[ref], how))
+                self.order.append((ref, host, self.side[ref], how)); self.host_of[ref] = host
             else:
                 self.parked.append(ref); self.order.append((ref, host, "-", "parked"))
                 self.side[ref] = "F"                               # keeps the loop moving; parked below

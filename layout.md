@@ -163,7 +163,10 @@ honoured exactly and the start is reproducible:
    of its island that it shares a net with is placed, only island members
    are candidates, and a member waits while its island's hub is not down.
    An IC is never hosted by a passive while a connector or an IC will do; an
-   ESD part's connector outranks its island. A part whose nets are all
+   ESD part's connector outranks its island; a crystal's load capacitors
+   are its, placed right after it at its ends (section 5), and a decoupling
+   capacitor lies across its power trace (3.3), facing the pin only where
+   that finds no room. A part whose nets are all
    planes (a decoupling or bulk capacitor) belongs to the IC the schematic
    draws it beside (waiting for it if it is not down yet), at that IC's next
    free pin on the rail, a capacitor never to another capacitor outside its
@@ -346,6 +349,13 @@ decoupling and RBIAS return, an ESD array on the same layer as the pair.
   side of the board unless the first two rings there are full (measured
   practice, section 9: 2 to 2.4 mm from the pin, on the same side nine
   times in ten even on two-sided boards).
+- **A decoupling capacitor lies across the power trace it decouples**: its
+  axis along the IC's edge, its power pad nearest the pin, so the trace from
+  the pin runs straight into that pad and the ground pad sits beside it with
+  its via, rather than the capacitor pointing at the pin with the trace
+  running past both pads. Where the pin's ring has no room for the
+  capacitor across the trace, it faces the pin instead, and the generator
+  says so.
 - One capacitor per supply pin where the datasheet gives one per pin; shared
   bulk where it says shared.
 - Regulators: the input capacitor, switch, catch diode, inductor and output
@@ -504,8 +514,17 @@ assembler is consulted on double-sided reflow before the first order.
   no blind or micro vias on any reference board.)
 - **Loops small** (parent 13.12.2 g): every signal has its return directly
   under it; a signal that changes layer gets a ground via beside it.
-- **Crystals**: the shortest possible tracks to the IC, load capacitors
-  between, a ground ring, no signals routed through the area.
+- **Crystals**: the shortest possible tracks to the IC, a ground ring, no
+  signals routed through the area. The crystal lies along the IC's edge at
+  the oscillator pins, a signal pad at each end, and **its load capacitors
+  flank it, one at each end**, each at the end nearer the crystal pad of
+  its own net, turned across the IC's edge with its signal pad on the trace
+  from that pad to the pin and its ground pad outward, so each trace runs
+  pin, capacitor pad, crystal pad in a line. The capacitors belong to the
+  crystal, not to the IC's pin, are placed right after it, and stay on its
+  side of the board; where an end is already taken (a lane entering the
+  same row of pins, a neighbouring city's void), the capacitor takes the
+  crystal's far side, still against it.
 - **High-current paths** follow the class width without necking at pads;
   a sense or limit resistor's trace is short and away from switching nodes.
   The class width comes from the current and the parent's IPC-2152 limit,
