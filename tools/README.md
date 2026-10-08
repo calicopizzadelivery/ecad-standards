@@ -10,7 +10,10 @@ and call the tools from a thin wrapper of their own.
     tools/placer.py DIRECTIVES.py OUT_DIR PROJECT [HOUSE_FOOTPRINTS_DIR]
 
 reads the project's schematic netlist (`kicad-cli`), its project file (net
-classes) and its directives module, and writes `OUT_DIR/PROJECT.kicad_pcb`,
+classes) and its directives module, holds every rail of `PLANES` to one
+piece once the other nets' higher-priority planes carve it (`tools/placer.py
+--rails DIRECTIVES.py` prints the pieces on their own, for drawing them),
+and writes `OUT_DIR/PROJECT.kicad_pcb`,
 `PROJECT.kicad_dru`, `placement.txt` and the DRC report `drc.txt`. Edge
 connectors are locked, ICs anchored, lanes laid, every other part placed at
 the pin it serves, small parts on the bottom where the directives allow,
@@ -86,7 +89,8 @@ footprint's own frame; sides turn with the anchor's rotation), `TEMPLATED`
 it hosts follow it, except indicator LEDs with their series resistors, ESD
 and connectors), `RAIL_VIAS` (`{class: count}`: vias beside each SMD pad on a
 plane net, one by default, section 4; what fits when the class's vias do
-not, fewer and then the default via, the shortfall reported),
+not, fewer and then the default via, the shortfall reported in
+`placement.txt`; the stub at the class width or the pad's narrower side),
 `COPPER_VOIDS` (`{name: (x0, y0, x1, y1)}`: no plane or pour on any layer,
 tracks and vias pass). Read by `copper.py` rather than the placer:
 `FLOODS`, `STITCH`, `STITCH_VIA`.

@@ -209,9 +209,15 @@ honoured exactly and the start is reproducible:
    position: an anchor written under the wrong designator (a regulator's
    place given to a level shifter) is invisible to DRC and to the cities,
    and visible there. Planes are drawn as zones (the ground plane on L2, the rails as regions
-   of L3 with the base rail underneath at the lowest priority, an isolated
-   ground island where there is one), stopping a millimetre short of the
-   edge, and a `.kicad_dru` carries the rules the directives need (nothing
+   of L3 at their own priorities, an isolated ground island where there is
+   one), stopping a millimetre short of the edge, after the rails gate: each
+   rail's copper is rasterised with the higher-priority planes of the other
+   nets carving it, and a rail in more than one piece stops the generation
+   (the router does not join the pieces of a plane net, and a via in a
+   carved patch reaches nothing), so such a rail is redrawn or routed
+   instead, in a class at the width its current wants (`--rails
+   DIRECTIVES.py` prints the pieces while the planes are being drawn);
+   a rail via is placed only where its net's plane is the one on top; and a `.kicad_dru` carries the rules the directives need (nothing
    but the isolated classes inside the isolation area; their creepage
    clearance).
 8. The silkscreen pass of section 6 runs over the placement: every
@@ -519,7 +525,7 @@ assembler is consulted on double-sided reflow before the first order.
   generator drops them before the router (section 2, step 7): every SMD pad
   on a net that has a plane or rail under it gets its class's vias
   (`RAIL_VIAS`, one by default) beside it, joined by a stub at the class
-  width, outward from the part, clear of every other pad, via and lane by
+  width or the pad's narrower side where that is less, outward from the part, clear of every other pad, via and lane by
   the clearance and of other nets' pads by a solder-mask web, so the current
   reaches the copper that carries it and the router has nothing to route
   for that pad. Where the class's vias do not fit beside a pad (a 1.2 mm via

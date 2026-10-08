@@ -746,15 +746,18 @@ class Placer:
 
     def rail_vias(self):
         """Every SMD pad on a net that has a plane or rail polygon under it gets that net's vias beside it, the
-        class's count (RAIL_VIAS), joined to the pad by a stub at the class width, so the current reaches the
+        class's count (RAIL_VIAS), joined to the pad by a stub at the class width (the pad's narrower side where that is
+        less), so the current reaches the
         copper that carries it and the router routes nothing for it (layout.md 4). Through-hole pads reach the
         planes by themselves. Returns (vias placed, pads served, pads with no room)."""
         polys = collections.defaultdict(list)                          # net -> [outline] of its planes and islands
+        covers = []                                                    # (net, layer, outline, priority) of every plane and island
         for plane in L.PLANES:
-            polys[plane[1]].append(plane[3])
+            polys[plane[1]].append(plane[3]); covers.append((plane[1], plane[2], plane[3], plane[4] if len(plane) > 4 else 0))
         for region in self.regions:
             if region.get("island"):
-                polys[region["island"][1]].append(region["island"][3])
+                isl = region["island"]
+                polys[isl[1]].append(isl[3]); covers.append((isl[1], isl[2], isl[3], isl[4] if len(isl) > 4 else 0))
         if not polys:
             return 0, 0, [], []
         def inside(pt, outline):
@@ -794,9 +797,17 @@ class Placer:
                 if overlap(box, pb, 0.5 if pnet != net else 0.2): return False   # 0.5 keeps a solder-mask web to another net's pad
             if any(math.hypot(x - vx, y - vy) < r + vr + 0.3 for vx, vy, vr in vias_here): return False
             if any(seg_dist((x, y), a, b) < r + hw + 0.3 for a, b, hw in lane_segs): return False
-            return any(inside((x, y), o) for o in polys[net])
+            # inside one of the net's own planes, and on that layer the net's plane is the one on top: a higher-priority
+            # rectangle of another net carves the base rail out there, and a via in the carved copper reaches nothing
+            for cnet, clayer, outline, prio in covers:
+                if cnet == net and inside((x, y), outline):
+                    top = max((p2 for n2, l2, o2, p2 in covers if l2 == clayer and n2 != net and inside((x, y), o2)), default=None)
+                    if top is None or top < prio:
+                        return True
+            return False
         def stub_ok(net, ref, a, b, hw):
-            """The stub from the pad centre to the via crosses no other pad, via or lane track (sampled every 0.1 mm)."""
+            """The stub from the pad centre (or the previous via) to the via crosses no other pad, via or lane track
+            (sampled every 0.1 mm); the vias at its own ends are its joints, not obstacles."""
             n = max(2, int(math.hypot(b[0] - a[0], b[1] - a[1]) / 0.1) + 1)
             for k in range(n + 1):
                 x, y = a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n
@@ -804,7 +815,8 @@ class Placer:
                 for pref, pnet, _, tht, pb in pad_boxes:
                     if pnet == net: continue                           # a stub across a pad of its own net is a joint, not a short
                     if overlap(box, pb, 0.3): return False
-                if any(math.hypot(x - vx, y - vy) < hw + vr + 0.3 for vx, vy, vr in vias_here): return False
+                if any(math.hypot(x - vx, y - vy) < hw + vr + 0.3 for vx, vy, vr in vias_here
+                       if math.hypot(vx - a[0], vy - a[1]) > 1e-6 and math.hypot(vx - b[0], vy - b[1]) > 1e-6): return False
                 if any(seg_dist((x, y), sa, sb) < hw + shw + 0.3 for sa, sb, shw in lane_segs): return False
             return True
         counts = getattr(L, "RAIL_VIAS", {})
@@ -1652,6 +1664,58 @@ class Placer:
         return omitted, outlined, not_outlined, stepped_out
 
 
+def rail_pieces(step=0.25, islands=()):
+    """Per plane net and layer, the pieces its copper falls into once the higher-priority planes of other nets carve it
+    (the directives' PLANES and the regions' islands, rasterised at `step` mm): {(net, layer): [piece names]}, a piece
+    named by the planes whose centres it holds. A rail in more than one piece is a directive error (layout.md 4): the
+    router does not join the pieces of a plane net, and a via in a carved patch reaches nothing."""
+    covers = [(p[1], p[2], p[3], p[4] if len(p) > 4 else 0, p[0]) for p in L.PLANES] + \
+             [(i[1], i[2], i[3], i[4] if len(i) > 4 else 0, i[0]) for i in islands]
+    nx, ny = int(W / step) + 1, int(H / step) + 1
+    def inside(x, y, outline):
+        n = len(outline); ok = False
+        for i in range(n):
+            (x0, y0), (x1, y1) = outline[i], outline[(i + 1) % n]
+            if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+                ok = not ok
+        return ok
+    out = {}
+    for layer in sorted({c[1] for c in covers}):
+        top = {}                                                       # (ix, iy) -> (priority, net)
+        for net, lay, outline, prio, name in covers:
+            if lay != layer: continue
+            xs = [p[0] for p in outline]; ys = [p[1] for p in outline]
+            for iy in range(max(0, int(min(ys) / step)), min(ny, int(max(ys) / step) + 1)):
+                for ix in range(max(0, int(min(xs) / step)), min(nx, int(max(xs) / step) + 1)):
+                    x, y = (ix + 0.5) * step, (iy + 0.5) * step
+                    if inside(x, y, outline) and top.get((ix, iy), (-1, None))[0] < prio:
+                        top[(ix, iy)] = (prio, net)
+        seen = set()
+        for cell, (prio, net) in top.items():
+            if cell in seen: continue
+            piece, stack = set(), [cell]
+            while stack:
+                c = stack.pop()
+                if c in seen or top.get(c, (None, None))[1] != net: continue
+                seen.add(c); piece.add(c)
+                stack += [(c[0] + 1, c[1]), (c[0] - 1, c[1]), (c[0], c[1] + 1), (c[0], c[1] - 1)]
+            names = [name for n2, lay, outline, _, name in covers if n2 == net and lay == layer
+                     and (int(sum(p[0] for p in outline) / len(outline) / step), int(sum(p[1] for p in outline) / len(outline) / step)) in piece]
+            out.setdefault((net, layer), []).append(" ".join(names) or f"{len(piece)} cells")
+    return out
+
+
+def rails_gate(islands=()):
+    """The rails' pieces printed, and the generation stopped on a rail in more than one piece."""
+    pieces = rail_pieces(islands=islands)
+    print("rails: " + "; ".join(f"{net} {layer} " + (f"{len(ps)} pieces ({' | '.join(ps)})" if len(ps) > 1 else "1 piece")
+                                for (net, layer), ps in sorted(pieces.items())))
+    split = [f"{net} on {layer}" for (net, layer), ps in pieces.items() if len(ps) > 1]
+    if split:
+        raise SystemExit("rails in pieces: " + ", ".join(split) + ": redraw the planes so each rail is one piece, or route the net")
+    return pieces
+
+
 def drc_gate(path):
     """kicad-cli pcb drc at every severity with the zones refilled; the report pinned to the title date and sorted so it is
     reproducible; the summary by severity (unconnected items apart). Returns the error counts by kind."""
@@ -1749,6 +1813,7 @@ def main(directives=None, out=None, project=None, house_fp=None):
         board.Add(fp); fps[ref] = fp
     # ---- placement
     P = Placer(board, fps, nets, classes, pad_net, sch_positions(), class_geometry())
+    rails_gate(islands=[r["island"] for r in P.regions if r.get("island")])
     P.place_fixed()
     P.resolve_lanes()
     P.place_satellites()
@@ -1886,6 +1951,11 @@ def main(directives=None, out=None, project=None, house_fp=None):
         f.write("part   host   side  where (side+ring, or free@distance from the pin)\n")
         for ref, host, layer, how in P.order:
             f.write(f"{ref:6s} {host:6s} {layer:5s} {how}\n")
+        f.write(f"\nrail vias (layout.md 4): {rail_placed} beside {rail_pads} pads on plane nets.\n")
+        f.write(f"pads with no room beside them for any via ({len(rail_none)}; the router or the hand pass joins them to the rail):\n  "
+                + " ".join(rail_none) + "\n")
+        f.write(f"pads served short of their class's count or via (placed for wanted; {len(rail_short)}; the hand pass adds the rest):\n  "
+                + "\n  ".join(rail_short) + "\n")
         f.write(f"\ncities (layout.md 3.1): the schematic's islands with two or more parts, connectors, holes and ESD aside: each one's extent on\n"
                 f"the board, and the members more than {L.ISLAND_SPREAD:g} mm from every other member (placed apart from their city)\n")
         apart = []
@@ -1926,6 +1996,13 @@ def main(directives=None, out=None, project=None, house_fp=None):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--rails":            # the rails' pieces from the directives alone, for drawing them
+        spec = importlib.util.spec_from_file_location("directives", sys.argv[2]); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        configure(mod, os.path.dirname(sys.argv[2]), "x", None)
+        pieces = rail_pieces()
+        for (net, layer), ps in sorted(pieces.items()):
+            print(f"{net} {layer}: {len(ps)} piece(s)" + ("" if len(ps) == 1 else ": " + " | ".join(ps)))
+        sys.exit(0)
     if len(sys.argv) < 4:
         raise SystemExit(__doc__.split("\n\n")[1])
     spec = importlib.util.spec_from_file_location("directives", sys.argv[1]); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
