@@ -105,8 +105,8 @@ board can come back as a bare SWIG pointer), removes whatever the router laid
 on a pair net whose pads the lanes all reach (the lanes carry the pairs; a
 pair net with a pad off the lane keeps the router's copper and is named),
 then in another (`--post2`) floors the router's sub-minimum stubs, lists the
-segments on a wide class that run on at a pad's width beyond the pad (the
-router's pad-entry necking: the hand pass widens them), writes the board in
+segments on a wide class that run on at a pad's width more than a millimetre
+beyond the pad (the router's pad-entry necking: the hand pass widens them), writes the board in
 canonical order and runs the DRC gate. The class
 widths given to the router are capped at `--max-width` (2.0 mm): the 6 A
 class runs on the rails through the rail vias. Every clearance in the

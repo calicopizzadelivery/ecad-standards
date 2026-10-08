@@ -233,7 +233,8 @@ honoured exactly and the start is reproducible:
    removed, where the lanes reach every pad of the net (a pair net with a
    pad off the lane keeps the router's copper and the sweep names the pad),
    the router's sub-minimum stubs are floored, the segments on a wide class
-   that run on at a pad's width beyond the pad are listed for the hand pass,
+   that run on at a pad's width more than a millimetre beyond the pad are
+   listed for the hand pass,
    the board is written in canonical order and the gate runs. The class widths the router sees
    are capped at 2 mm (the 6 A class runs on the rails through its vias, not
    as a track), and every clearance goes to the router 10 µm over the

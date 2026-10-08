@@ -75,13 +75,13 @@ def post(board_path):
     # did not put on the lane's path) keeps the router's copper, and the sweep says so
     locked = [t for t in b.GetTracks() if t.IsLocked()]
     def reached(pad):
-        pos = pad.GetPosition()
+        """A locked track ends inside the pad, or a locked via sits in it (a lane ends inside the pad, not at its centre)."""
         for t in locked:
             if str(t.GetNetname()) != str(pad.GetNetname()):
                 continue
-            if t.GetClass() == "PCB_VIA" and t.GetPosition() == pos:
+            if t.GetClass() == "PCB_VIA" and pad.HitTest(t.GetPosition()):
                 return True
-            if t.GetClass() == "PCB_TRACK" and t.HitTest(pos, int(0.01e6)):
+            if t.GetClass() == "PCB_TRACK" and (pad.HitTest(t.GetStart()) or pad.HitTest(t.GetEnd())):
                 return True
         return False
     off_lane = {}
@@ -121,6 +121,14 @@ def post2(board_path):
     pads = collections.defaultdict(list)
     for pad in b.GetPads():
         pads[str(pad.GetNetname())].append(pad)
+    def beyond(tr, pads_of_net):
+        """The length of the segment outside every pad of its net, sampled every 0.05 mm."""
+        a, e = tr.GetStart(), tr.GetEnd(); n = max(2, int(tr.GetLength() / 50000)); out = 0
+        for k in range(n):
+            x, y = a.x + (e.x - a.x) * (k + 0.5) / n, a.y + (e.y - a.y) * (k + 0.5) / n
+            if not any(p.HitTest(pcbnew.VECTOR2I(int(x), int(y))) for p in pads_of_net):
+                out += 1
+        return tr.GetLength() / 1e6 * out / n
     necks = collections.defaultdict(lambda: [0, 0.0])
     for tr in b.GetTracks():
         if tr.GetClass() != "PCB_TRACK" or tr.IsLocked():
@@ -128,13 +136,13 @@ def post2(board_path):
         nc = tr.GetNetClassName(); cw = ds.m_NetSettings.GetNetclasses()[nc].GetTrackWidth() if nc in ds.m_NetSettings.GetNetclasses() else 0
         if cw <= ds.m_NetSettings.GetDefaultNetclass().GetTrackWidth() or tr.GetWidth() >= min(cw, cap) - 10000:
             continue
-        n = str(tr.GetNetname())
-        if any(p.HitTest(tr.GetStart()) or p.HitTest(tr.GetEnd()) for p in pads[n]):
-            continue                                                  # the entry stub itself
-        necks[n][0] += 1; necks[n][1] += tr.GetLength() / 1e6
+        n = str(tr.GetNetname()); over = beyond(tr, pads[n])
+        if over <= 1.0:
+            continue                                                  # the entry stub itself: a pad's width until the wide track clears the neighbours
+        necks[n][0] += 1; necks[n][1] += over
     if necks:
-        print("   router necks below the class width beyond the pads (for the hand pass): " +
-              ", ".join(f"{n} {k} segments {l:.1f} mm" for n, (k, l) in sorted(necks.items())))
+        print("   router necks below the class width more than 1 mm beyond the pads (for the hand pass): " +
+              ", ".join(f"{n} {k} segments, {l:.1f} mm beyond" for n, (k, l) in sorted(necks.items())))
     pcbnew.SaveBoard(board_path, b, True)
     base = os.path.splitext(board_path)[0]
     for f in (base + ".dsn", base + ".ses"):
