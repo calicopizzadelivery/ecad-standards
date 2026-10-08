@@ -62,7 +62,7 @@ def stitch(board, L, cfg, netinfo, via_dia, via_drill, placed):
                 own.append(vias[-1])
         elif t.GetClass() == "PCB_TRACK":
             s, e = t.GetStart(), t.GetEnd(); tracks.append((s.x / 1e6, s.y / 1e6, e.x / 1e6, e.y / 1e6, t.GetWidth() / 2e6))
-    keepouts = [z for z in board.Zones() if z.GetIsRuleArea() and z.GetDoNotAllowVias()]
+    keepouts = [z for z in board.Zones() if z.GetIsRuleArea() and (z.GetDoNotAllowVias() or z.GetDoNotAllowZoneFills())]   # a via where no pour comes connects nothing
     others = []                                                        # copper zones of other nets: no sliver left between a via and the zone's edge
     for z in board.Zones():
         if not z.GetIsRuleArea() and str(z.GetNetname()) != net:
@@ -90,7 +90,7 @@ def stitch(board, L, cfg, netinfo, via_dia, via_drill, placed):
             if d < r + 0.3 + (0.5 if z.Outline().Contains(pt) else 0):   # inside: the fill between via and edge must keep the min width
                 return False
         return not any(z.Outline().Collide(pt, pcbnew.FromMM(r + 0.01)) for z in keepouts)   # the via's body, not just its centre
-    step = 0.5; reach = pitch / 2 - step
+    nearby_step = step = 0.5; reach = pitch / 2 - step
     nearby = sorted({(round(i * step, 3), round(j * step, 3)) for i in range(-int(reach / step), int(reach / step) + 1)
                      for j in range(-int(reach / step), int(reach / step) + 1) if math.hypot(i * step, j * step) <= reach},
                     key=lambda d: (math.hypot(*d), d))
@@ -107,6 +107,30 @@ def stitch(board, L, cfg, netinfo, via_dia, via_drill, placed):
                         break
             x += pitch
         y += pitch
+    # island vias: a pour island that holds a pad of the net but no via is a pad the plane never reaches; one via inside it
+    pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    pads_here = [MM(p.GetPosition().x / 1e6, p.GetPosition().y / 1e6) for fp in board.GetFootprints() for p in fp.Pads() if str(p.GetNetname()) == net]
+    added = 0
+    for z in board.Zones():
+        if z.GetIsRuleArea() or str(z.GetNetname()) != net:
+            continue
+        for l in z.GetLayerSet().Seq():
+            polys = z.GetFilledPolysList(l)
+            for i in range(polys.OutlineCount()):
+                ol = polys.Outline(i)
+                if not any(ol.PointInside(pt) for pt in pads_here) or any(ol.PointInside(MM(vx, vy)) for vx, vy, _ in own):
+                    continue
+                bb = ol.BBox(); x0, y0, x1, y1 = bb.GetLeft() / 1e6, bb.GetTop() / 1e6, bb.GetRight() / 1e6, bb.GetBottom() / 1e6
+                spots = [(x, y) for x in [x0 + 0.5 + k * nearby_step for k in range(int((x1 - x0) / nearby_step))]
+                         for y in [y0 + 0.5 + k * nearby_step for k in range(int((y1 - y0) / nearby_step))] if ol.PointInside(MM(x, y)) and clear(x, y)]
+                if spots:
+                    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+                    x, y = min(spots, key=lambda s: math.hypot(s[0] - cx, s[1] - cy))
+                    v = pcbnew.PCB_VIA(board); v.SetPosition(MM(x, y)); v.SetWidth(pcbnew.FromMM(via_dia)); v.SetDrill(pcbnew.FromMM(via_drill))
+                    v.SetViaType(pcbnew.VIATYPE_THROUGH); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetNet(netinfo[net]); board.Add(v)
+                    vias.append((x, y, r)); own.append((x, y, r)); placed.append(v); added += 1
+    if added:
+        print(f"   {added} island vias: pour islands holding a pad of {net} that no stitching via reached")
 
 
 def islands(board, skip_nets):

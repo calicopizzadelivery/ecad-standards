@@ -44,7 +44,8 @@ DEFAULTS = {"EDGE_ZONE": 3.0, "HOLE_CLEAR_R": 4.0, "PACK_MARGIN": 0.15, "RING_GA
             "ESD_VALUES": ("USBLC", "PESD", "ESDA", "TPD", "SRV05", "IP42", "TVS"), "FIXED": {}, "ANCHORS": {},
             "ESCAPE_WIDTH": 0.2, "ESCAPE_LENGTH": 1.2, "CHAMFER": 0.8, "VIA_PAIR_OFFSET": 0.45, "BRIDGE_DEPTHS": (0.8, 1.6), "THT_STUB": 1.0, "DIRECT_STUB": 0.4,
             "MATCH_TOLERANCE": 0.25, "BUMP_HEIGHT": 2.0, "BUMP_WIDTH": 1.5, "ISLAND_GAP": 6.0, "ISLAND_REACH": None, "ISLAND_SPREAD": 10.0,
-            "CITY_GAP": 2.0, "REGULATORS": {}, "LAYOUTS": {}, "TEMPLATED": {}, "COPPER_VOIDS": {}, "SIDES": {}}
+            "CITY_GAP": 2.0, "REGULATORS": {}, "LAYOUTS": {}, "TEMPLATED": {}, "COPPER_VOIDS": {}, "SIDES": {},
+            "RAIL_VIAS": {}}
 
 
 class Directives:
@@ -587,7 +588,8 @@ class Placer:
             elif any(overlap(b, c) for c in region["grown"]):
                 return region["name"]
         if layer == "F":
-            if any(overlap(b, c, 0.3) for c in self.locked):
+            conn_gap = max(0.3, mine["gap"]) if mine else 0.3          # a region's part keeps the creepage from the connectors outside it
+            if any(overlap(b, c, conn_gap if not any(inside(c, r) for r in mine["rects"]) else 0.3) if mine else overlap(b, c, 0.3) for c in self.locked):
                 return "a connector"
         else:
             for other, blocks in self.under.items():
@@ -610,6 +612,9 @@ class Placer:
         return ca is not None and ca == cb
 
     def margin(self, a, b):
+        ra, rb = self.psu_part(a), self.psu_part(b)
+        if ra is not rb:                                               # one side of an isolation barrier to the other: the creepage (3.6)
+            return max(L.CITY_GAP, (ra or rb)["gap"])
         return L.PACK_MARGIN if self.same_city(a, b) else L.CITY_GAP
 
     # ---- the fixed parts
@@ -739,6 +744,110 @@ class Placer:
         track, clear = self.geometry.get(self.classes.get(net, "Default"), self.geometry["Default"])
         return track, clear
 
+    def rail_vias(self):
+        """Every SMD pad on a net that has a plane or rail polygon under it gets that net's vias beside it, the
+        class's count (RAIL_VIAS), joined to the pad by a stub at the class width, so the current reaches the
+        copper that carries it and the router routes nothing for it (layout.md 4). Through-hole pads reach the
+        planes by themselves. Returns (vias placed, pads served, pads with no room)."""
+        polys = collections.defaultdict(list)                          # net -> [outline] of its planes and islands
+        for plane in L.PLANES:
+            polys[plane[1]].append(plane[3])
+        for region in self.regions:
+            if region.get("island"):
+                polys[region["island"][1]].append(region["island"][3])
+        if not polys:
+            return 0, 0, []
+        def inside(pt, outline):
+            x, y = pt; n = len(outline); ok = False
+            for i in range(n):
+                (x0, y0), (x1, y1) = outline[i], outline[(i + 1) % n]
+                if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+                    ok = not ok
+            return ok
+        pad_boxes = []                                                 # (ref, net, layer, box) of every pad, both sides
+        for ref, fp in self.fps.items():
+            for p in fp.Pads():
+                bb = p.GetBoundingBox()
+                pad_boxes.append((ref, self.pad_net.get((ref, p.GetNumber())), "B" if fp.IsFlipped() else "F", p.GetDrillSize().x > 0,
+                                  (bb.GetLeft() / 1e6, bb.GetTop() / 1e6, bb.GetRight() / 1e6, bb.GetBottom() / 1e6)))
+        vias_here = [(x, y, dia / 2) for _, x, y, dia, _ in self.vias]
+        lane_segs = [(a, b, w / 2) for _, _, w, a, b in self.tracks]
+        def seg_dist(p, a, b):
+            dx, dy = b[0] - a[0], b[1] - a[1]; l2 = dx * dx + dy * dy
+            if l2 == 0: return math.hypot(p[0] - a[0], p[1] - a[1])
+            u = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2))
+            return math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy)
+        def via_ok(net, ref, x, y, r):
+            z = L.EDGE_ZONE
+            if x - r < z or y - r < z or x + r > W - z or y + r > H - z: return False
+            box = (x - r, y - r, x + r, y + r)
+            if any(overlap(box, c) for c in self.corners): return False
+            if any(overlap(box, c, 0.1) for _, c in self.lanes): return False
+            for a, b, cc, d in getattr(L, "COPPER_VOIDS", {}).values():
+                if overlap(box, (a, b, cc, d)): return False
+            mine = self.psu_part(ref)
+            for region in self.regions:
+                if region is not mine and any(overlap(box, c) for c in region["grown"]): return False
+                if region is mine and not any(inside((x, y), [(c[0], c[1]), (c[2], c[1]), (c[2], c[3]), (c[0], c[3])]) for c in region["rects"]): return False
+            for pref, pnet, _, tht, pb in pad_boxes:
+                if pnet == net and pref == ref: continue
+                if overlap(box, pb, 0.5 if pnet != net else 0.2): return False   # 0.5 keeps a solder-mask web to another net's pad
+            if any(math.hypot(x - vx, y - vy) < r + vr + 0.3 for vx, vy, vr in vias_here): return False
+            if any(seg_dist((x, y), a, b) < r + hw + 0.3 for a, b, hw in lane_segs): return False
+            return any(inside((x, y), o) for o in polys[net])
+        def stub_ok(net, ref, a, b, hw):
+            """The stub from the pad centre to the via crosses no other pad, via or lane track (sampled every 0.1 mm)."""
+            n = max(2, int(math.hypot(b[0] - a[0], b[1] - a[1]) / 0.1) + 1)
+            for k in range(n + 1):
+                x, y = a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n
+                box = (x - hw, y - hw, x + hw, y + hw)
+                for pref, pnet, _, tht, pb in pad_boxes:
+                    if pnet == net: continue                           # a stub across a pad of its own net is a joint, not a short
+                    if overlap(box, pb, 0.3): return False
+                if any(math.hypot(x - vx, y - vy) < hw + vr + 0.3 for vx, vy, vr in vias_here): return False
+                if any(seg_dist((x, y), sa, sb) < hw + shw + 0.3 for sa, sb, shw in lane_segs): return False
+            return True
+        counts = getattr(L, "RAIL_VIAS", {})
+        placed, served, no_room = 0, 0, []
+        for ref, fp in self.fps.items():
+            if ref in L.HOLES: continue
+            side = "B" if fp.IsFlipped() else "F"
+            fx, fy = fp.GetPosition().x / 1e6, fp.GetPosition().y / 1e6
+            for p in fp.Pads():
+                net = self.pad_net.get((ref, p.GetNumber()))
+                if not net or net not in polys or p.GetDrillSize().x > 0: continue
+                px, py = p.GetPosition().x / 1e6, p.GetPosition().y / 1e6
+                if not any(inside((px, py), o) for o in polys[net]): continue
+                cls = self.classes.get(net, "Default"); want = counts.get(cls, 1)
+                dia, _ = self.via_geometry.get(cls, self.via_geometry.get("Default", (0.6, 0.3))); r = dia / 2
+                half = max(p.GetSize().x, p.GetSize().y) / 2e6
+                track, _ = self.class_of(net); sw = min(track, min(p.GetSize().x, p.GetSize().y) / 1e6)
+                dirs = sorted([(1, 0), (-1, 0), (0, 1), (0, -1), (0.707, 0.707), (-0.707, 0.707), (0.707, -0.707), (-0.707, -0.707)],
+                              key=lambda d: -((px - fx) * d[0] + (py - fy) * d[1]))   # outward from the part first
+                got = []
+                for dx, dy in dirs:
+                    got = []; prev = (px, py)
+                    for k in range(want):
+                        step = None
+                        for dist in [half + r + 0.35 + (k * (dia + 0.35)) + j * 0.25 for j in range(10)]:
+                            vx, vy = px + dx * dist, py + dy * dist
+                            if via_ok(net, ref, vx, vy, r) and stub_ok(net, ref, prev, (vx, vy), sw / 2):
+                                step = (vx, vy); break
+                        if step is None: break
+                        got.append(step); vias_here.append((step[0], step[1], r)); prev = step
+                    if len(got) == want: break
+                    for g in got: vias_here.remove((g[0], g[1], r))
+                    got = []
+                if not got:
+                    no_room.append(f"{ref}.{p.GetNumber()}"); continue
+                layer = "F.Cu" if side == "F" else "B.Cu"
+                prev = (px, py)
+                for g in got:
+                    self.tracks.append((net, layer, sw, prev, g)); lane_segs.append((prev, g, sw / 2)); prev = g
+                    self.add_via(net, g); placed += 1
+                served += 1
+        return placed, served, no_room
+
     def corridor(self, name, a, b, hw):
         """A leg's keep-out box, clipped where it enters the courtyard of a part the lane joins (handled by the caller)."""
         box = (min(a[0], b[0]) - hw, min(a[1], b[1]) - hw, max(a[0], b[0]) + hw, max(a[1], b[1]) + hw)
@@ -828,6 +937,7 @@ class Placer:
         end_items = [it for it in items if it[0] not in ("x", "y", "layer")]
         if len(end_items) != 2:
             raise SystemExit(f"lane {name}: a pair lane has exactly two ends")
+        laid_from = len(self.tracks)                                   # the member lengths count every track laid from here: stubs, escapes, legs
         # each end: the P and N pads (a list means doubled pads: members chosen below, the rest bridged)
         def pads_of_end(item):
             """-> {side: [(ref, pad), ...]}: an end is (ref, {"P": pad(s), "N": pad(s)}) or ("pads", {"P": (ref, pad), "N": (ref, pad)})."""
@@ -950,8 +1060,8 @@ class Placer:
         for side, net, offp in (("P", netP, offP), ("N", netN, offN)):
             self.tracks.append((net, layers[0], esc_w, tips0[side], offp[0]))
             self.tracks.append((net, layers[-1], esc_w, offp[-1], tips1[side]))
-        start = len(self.tracks); self.tracks += tracks_out
-        self.pairs_laid.append((name, netP, netN, sP, start, len(self.tracks)))
+        self.tracks += tracks_out
+        self.pairs_laid.append((name, netP, netN, sP, laid_from, len(self.tracks)))   # the bridges below are not signal path
         self.bridge(name, bridges0, netP, netN, d0, layers[0]); self.bridge(name, bridges1, netP, netN, (-d1[0], -d1[1]), layers[-1])
         # corridors along the centreline legs
         ends = [r for spec in (spec0, spec1) for side in ("P", "N") for r, _ in spec[side]]
@@ -1600,6 +1710,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
     P.resolve_lanes()
     P.place_satellites()
     residual = P.relax()
+    rail_placed, rail_pads, rail_none = P.rail_vias()
+    print(f"rail vias: {rail_placed} beside {rail_pads} pads on plane nets" + (f"; no room at {len(rail_none)}: {' '.join(rail_none[:12])}" if rail_none else ""))
     omitted, outlined, not_outlined, stepped_out = P.silkscreen()
     # ---- the lanes' copper
     for net, layer, width, (x0, y0), (x1, y1) in P.tracks:
@@ -1643,8 +1755,18 @@ def main(directives=None, out=None, project=None, house_fp=None):
             ol.NewHole()
             for x, y in hole: ol.Append(MM(x, y), 0, 0)
         board.Add(zn); return zn
-    for plane in L.PLANES:
+    for plane in L.PLANES:                                 # a board-net plane may not enter an isolated region's creepage band (3.6)
         name, net, layer, outline = plane[:4]
+        for region in L.ISOLATION_REGIONS:
+            if not re.search(region["nets"], net):
+                poly = pcbnew.SHAPE_POLY_SET(); poly.NewOutline()
+                for x, y in outline: poly.Append(MM(x, y))
+                for g in region["grown"]:
+                    band = pcbnew.SHAPE_POLY_SET(); band.NewOutline()
+                    for x, y in ((g[0], g[1]), (g[2], g[1]), (g[2], g[3]), (g[0], g[3])): band.Append(MM(x, y))
+                    cut = pcbnew.SHAPE_POLY_SET(poly); cut.BooleanIntersection(band)
+                    if cut.Area() > pcbnew.FromMM(0.01) * pcbnew.FromMM(0.01):
+                        raise SystemExit(f"plane {name} ({net}) enters the creepage band of {region['name']} by {cut.Area() / 1e12:.2f} mm2: redraw it clear of the grown region {g}")
         zn = copper_zone(name, net, layer, outline)
         if len(plane) > 4:
             zn.SetAssignedPriority(plane[4])

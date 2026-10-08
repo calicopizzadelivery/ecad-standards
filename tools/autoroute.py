@@ -18,7 +18,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=7200)
     ap.add_argument("--plane-layers", nargs="*", default=["In1.Cu", "In2.Cu"], help="layers the router may not route on (planes only)")
     ap.add_argument("--keepout-grow", type=float, default=2.0, help="a rule area named for a .kicad_dru rule goes out as a hard keep-out grown by this much (mm)")
-    ap.add_argument("--max-width", type=float, default=1.0, help="cap on the class track widths given to the router (mm): the planes carry the current")
+    ap.add_argument("--max-width", type=float, default=2.0, help="cap on the class track widths given to the router (mm): the rails carry the current through the rail vias; the 6 A class is capped")
     a = ap.parse_args()
     board_path = os.path.abspath(a.board); work = os.path.splitext(board_path)[0]
     b = pcbnew.LoadBoard(board_path)
@@ -62,6 +62,17 @@ def post(board_path):
     """After the session import, in its own process: the router's pad-entry stubs floored to the fab's minimum width,
     the Specctra files removed, the board written in canonical order, the DRC gate run."""
     b = pcbnew.LoadBoard(board_path)
+    # the pairs are the generator's: whatever the router added on a pair net (a stub to a pad centre, a second path round
+    # a bridge) comes out; the locked lanes connect those nets by themselves
+    pair_nets = {str(n) for n in b.GetNetsByName().keys() if str(n).endswith(("_P", "_N"))}
+    pair_nets = {n for n in pair_nets if (n[:-1] + ("N" if n.endswith("P") else "P")) in pair_nets}
+    removed = 0
+    for item in list(b.GetTracks()):
+        if not item.IsLocked() and str(item.GetNetname()) in pair_nets:
+            b.Remove(item); removed += 1
+    if removed:
+        print(f"   {removed} router tracks and vias on pair nets removed (the lanes carry the pairs)")
+        pcbnew.SaveBoard(board_path, b, True); b = pcbnew.LoadBoard(board_path)
     floor = b.GetDesignSettings().m_TrackMinWidth                   # the router's pad-entry stubs can come in under the fab's floor
     widened = 0
     for tr in b.GetTracks():
