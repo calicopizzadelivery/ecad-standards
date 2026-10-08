@@ -204,7 +204,11 @@ honoured exactly and the start is reproducible:
    that drives them), are the first hand work.
 7. The rail vias of section 4 are dropped beside the pads of every plane
    net, the class's count each, or what fits (section 4), and reported
-   with the pads that fell short and the pads that had no room. Planes are drawn as zones (the ground plane on L2, the rails as regions
+   with the pads that fell short and the pads that had no room. The
+   report also lists every anchored part with its value beside its
+   position: an anchor written under the wrong designator (a regulator's
+   place given to a level shifter) is invisible to DRC and to the cities,
+   and visible there. Planes are drawn as zones (the ground plane on L2, the rails as regions
    of L3 with the base rail underneath at the lowest priority, an isolated
    ground island where there is one), stopping a millimetre short of the
    edge, and a `.kicad_dru` carries the rules the directives need (nothing

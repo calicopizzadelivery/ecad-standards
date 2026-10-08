@@ -1859,12 +1859,12 @@ def main(directives=None, out=None, project=None, house_fp=None):
     sides = collections.Counter(P.side.values())
     print(f"wrote {path}: {len(fps)} footprints, {len(netinfo)} nets, {len(list(board.Zones()))} zones, {len(P.tracks)} lane tracks, {len(P.vias)} vias in {time.time() - t0:.0f} s")
     print(f"placement: {len(P.fixed)} fixed; top: {hows[('ring', 'F')]} in rings at their pins, {hows[('free', 'F')]} at the nearest free spot; "
-    # the anchored parts with their values beside their positions: an anchor written under the wrong designator (the
-    # eFuse's position given to a level shifter) shows here, since DRC and the cities cannot see it
-    print("anchors: " + ", ".join(f"{ref} {fps[ref].GetValue()} at ({x:g}, {y:g})" for ref, (x, y, *_) in sorted(L.ANCHORS.items()) if ref in fps))
           f"bottom: {hows[('ring', 'B')]} in rings under their pins, {hows[('free', 'B')]} at the nearest free spot; "
           f"{len(P.parked)} parked in SPARE{': ' + ' '.join(P.parked) if P.parked else ''}; {residual} residual overlap(s); "
           f"{sides['F']} parts on top, {sides['B']} on the bottom")
+    # the anchored parts with their values beside their positions: an anchor written under the wrong designator (the
+    # eFuse's position given to a level shifter) shows here, since DRC and the cities cannot see it
+    print("anchors: " + ", ".join(f"{ref} {fps[ref].GetValue()} at ({x:g}, {y:g})" for ref, (x, y, *_) in sorted(L.ANCHORS.items()) if ref in fps))
     esd = []
     for ref, host, layer, how in P.order:
         if P.is_esd(ref):
