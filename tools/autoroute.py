@@ -15,7 +15,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("board"); ap.add_argument("freerouting")
     ap.add_argument("--passes", type=int, default=50); ap.add_argument("--threads", type=int, default=1)
-    ap.add_argument("--timeout", type=int, default=7200)
+    ap.add_argument("--timeout", type=int, default=14400, help="seconds FreeRouting may run (a 140 x 100 mm board with 500 connections takes two to three hours)")
     ap.add_argument("--plane-layers", nargs="*", default=["In1.Cu", "In2.Cu"], help="layers the router may not route on (planes only)")
     ap.add_argument("--keepout-grow", type=float, default=2.0, help="a rule area named for a .kicad_dru rule goes out as a hard keep-out grown by this much (mm)")
     ap.add_argument("--max-width", type=float, default=2.0, help="cap on the class track widths given to the router (mm): the rails carry the current through the rail vias; the 6 A class is capped")
@@ -44,8 +44,11 @@ def main():
     txt = re.sub(r"\(width (\d+)\)", lambda m: f"(width {min(int(m.group(1)), cap)})", txt)
     open(dsn, "w", encoding="utf-8").write(txt)
     print(f"exported {os.path.basename(dsn)} with {fixed} fixed items, {dropped} corridors left out, {hardened} regions hardened, widths capped at {a.max_width} mm, planes on {' '.join(a.plane_layers)}; routing up to {a.passes} passes")
-    r = subprocess.run([a.freerouting, "-de", dsn, "-do", ses, "-mp", str(a.passes), "-mt", str(a.threads)],
-                       capture_output=True, text=True, timeout=a.timeout)
+    try:
+        r = subprocess.run([a.freerouting, "-de", dsn, "-do", ses, "-mp", str(a.passes), "-mt", str(a.threads)],
+                           capture_output=True, text=True, timeout=a.timeout)
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"FreeRouting did not finish within {a.timeout} s: raise --timeout or lower --passes (the session file is written only at the end)")
     tail = [l for l in (r.stdout + r.stderr).splitlines() if "unrouted" in l.lower() or "completed" in l.lower()][-3:]
     for l in tail:
         print("   " + l[-160:])
