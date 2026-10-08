@@ -203,8 +203,8 @@ honoured exactly and the start is reproducible:
    the indicator LEDs (which belong where they can be seen, not at the pin
    that drives them), are the first hand work.
 7. The rail vias of section 4 are dropped beside the pads of every plane
-   net, the class's count each, and reported with the pads that had no
-   room. Planes are drawn as zones (the ground plane on L2, the rails as regions
+   net, the class's count each, or what fits (section 4), and reported
+   with the pads that fell short and the pads that had no room. Planes are drawn as zones (the ground plane on L2, the rails as regions
    of L3 with the base rail underneath at the lowest priority, an isolated
    ground island where there is one), stopping a millimetre short of the
    edge, and a `.kicad_dru` carries the rules the directives need (nothing
@@ -226,8 +226,11 @@ honoured exactly and the start is reproducible:
    session comes back and the board is saved at once; in a fresh process the
    copper the router laid on a pair net (a stub to a pad centre, a second
    path round a bridge: the lanes connect those nets by themselves) is
-   removed, the router's sub-minimum stubs are floored, the board is written
-   in canonical order and the gate runs. The class widths the router sees
+   removed, where the lanes reach every pad of the net (a pair net with a
+   pad off the lane keeps the router's copper and the sweep names the pad),
+   the router's sub-minimum stubs are floored, the segments on a wide class
+   that run on at a pad's width beyond the pad are listed for the hand pass,
+   the board is written in canonical order and the gate runs. The class widths the router sees
    are capped at 2 mm (the 6 A class runs on the rails through its vias, not
    as a track), and every clearance goes to the router 10 µm over the
    project's, so its rounding never lands under DRC's figure; a router
@@ -256,7 +259,9 @@ honoured exactly and the start is reproducible:
    ([kicad-generation.md](kicad-generation.md)): `pcbnew` draws random UUIDs
    and writes items in their order, so the generator sorts footprints by
    reference, graphics by content and zones by name, derives every UUID in
-   document order, pins the DRC report's date and sorts its entries. Two
+   document order, pins the DRC report's date, sorts its entries and
+   writes its unconnected items as a tally per net (KiCad names a different
+   pair of items for the same missing connection on every run). Two
    generations of one design are byte-identical, report included. An error inside a
    library footprint (a connector's own hole-to-pad spacing under the board's
    constraint) is checked against the fab's minimums and recorded in the
@@ -512,7 +517,11 @@ assembler is consulted on double-sided reflow before the first order.
   width, outward from the part, clear of every other pad, via and lane by
   the clearance and of other nets' pads by a solder-mask web, so the current
   reaches the copper that carries it and the router has nothing to route
-  for that pad. A pad with no room beside it (the packed rings leave none
+  for that pad. Where the class's vias do not fit beside a pad (a 1.2 mm via
+  between 0402 pads seldom does) the engine places what fits, fewer of
+  them and then the default via, down to one, and reports the shortfall
+  for the hand pass: a rail reached by one small via is a rail reached, a
+  rail reached by none is an island. A pad with no room beside it (the packed rings leave none
   at many) is reported and left to the router and the hand pass; a
   through-hole pad reaches the planes by itself.
 - Planes stop short of the board edge by the fab's copper-to-edge minimum

@@ -8,6 +8,7 @@ imports the session back, writes the board in canonical order (placer.canonical)
 """
 import os, re, sys, subprocess, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import collections
 import pcbnew
 
 
@@ -70,12 +71,34 @@ def post(board_path):
     # a bridge) comes out; the locked lanes connect those nets by themselves
     pair_nets = {str(n) for n in b.GetNetsByName().keys() if str(n).endswith(("_P", "_N"))}
     pair_nets = {n for n in pair_nets if (n[:-1] + ("N" if n.endswith("P") else "P")) in pair_nets}
+    # only where the lanes reach every pad of the net: a pair net with a pad off the lane (a shunt capacitor the directives
+    # did not put on the lane's path) keeps the router's copper, and the sweep says so
+    locked = [t for t in b.GetTracks() if t.IsLocked()]
+    def reached(pad):
+        pos = pad.GetPosition()
+        for t in locked:
+            if str(t.GetNetname()) != str(pad.GetNetname()):
+                continue
+            if t.GetClass() == "PCB_VIA" and t.GetPosition() == pos:
+                return True
+            if t.GetClass() == "PCB_TRACK" and t.HitTest(pos, int(0.01e6)):
+                return True
+        return False
+    off_lane = {}
+    for pad in b.GetPads():
+        n = str(pad.GetNetname())
+        if n in pair_nets and not reached(pad):
+            off_lane.setdefault(n, []).append(f"{pad.GetParentFootprint().GetReference()}.{pad.GetNumber()}")
+    swept = pair_nets - set(off_lane)
     removed = 0
     for item in list(b.GetTracks()):
-        if not item.IsLocked() and str(item.GetNetname()) in pair_nets:
+        if not item.IsLocked() and str(item.GetNetname()) in swept:
             b.Remove(item); removed += 1
     if removed:
         print(f"   {removed} router tracks and vias on pair nets removed (the lanes carry the pairs)")
+    for n in sorted(off_lane):
+        print(f"   pair net {n}: pads off the lane ({' '.join(off_lane[n])}), the router's copper kept")
+    if removed:
         pcbnew.SaveBoard(board_path, b, True)
     # the rest in yet another process: a board reloaded after items were removed comes back as a bare pointer too
     subprocess.run([sys.executable, os.path.abspath(__file__), "--post2", board_path], check=True)
@@ -91,6 +114,27 @@ def post2(board_path):
             tr.SetWidth(floor); widened += 1
     if widened:
         print(f"   {widened} stubs widened to the {floor / 1e6:.3f} mm floor")
+    # the router necks a wide class down to the pad's width at a pad entry and sometimes runs on at that width: every
+    # unlocked segment on a class wider than the default that is narrower than the class (capped at the 2 mm the router
+    # is given) and touches no pad of its net is listed for the hand pass
+    ds = b.GetDesignSettings(); cap = int(2.0e6)
+    pads = collections.defaultdict(list)
+    for pad in b.GetPads():
+        pads[str(pad.GetNetname())].append(pad)
+    necks = collections.defaultdict(lambda: [0, 0.0])
+    for tr in b.GetTracks():
+        if tr.GetClass() != "PCB_TRACK" or tr.IsLocked():
+            continue
+        nc = tr.GetNetClassName(); cw = ds.m_NetSettings.GetNetclasses()[nc].GetTrackWidth() if nc in ds.m_NetSettings.GetNetclasses() else 0
+        if cw <= ds.m_NetSettings.GetDefaultNetclass().GetTrackWidth() or tr.GetWidth() >= min(cw, cap) - 10000:
+            continue
+        n = str(tr.GetNetname())
+        if any(p.HitTest(tr.GetStart()) or p.HitTest(tr.GetEnd()) for p in pads[n]):
+            continue                                                  # the entry stub itself
+        necks[n][0] += 1; necks[n][1] += tr.GetLength() / 1e6
+    if necks:
+        print("   router necks below the class width beyond the pads (for the hand pass): " +
+              ", ".join(f"{n} {k} segments {l:.1f} mm" for n, (k, l) in sorted(necks.items())))
     pcbnew.SaveBoard(board_path, b, True)
     base = os.path.splitext(board_path)[0]
     for f in (base + ".dsn", base + ".ses"):
@@ -114,25 +158,30 @@ def post3(board_path):
     if not os.path.exists(rep):
         return
     txt = open(rep, encoding="utf-8").read()
-    faulted = []                                                      # (kind, x, y) the report names, in mm
+    faulted = []                                                      # (kind, x, y, net, layer, length) the report names, in mm
     for block in re.split(r"\n(?=\[)", txt):
         head = block.splitlines()[0] if block else ""
         if not head.startswith("[") or head.startswith("[unconnected_items]") or "; error" not in block:
             continue
-        for m in re.finditer(r"@\(([-\d.]+) mm, ([-\d.]+) mm\): (Track|Via) \[", block):
-            faulted.append((m.group(3), float(m.group(1)), float(m.group(2))))
+        for m in re.finditer(r"@\(([-\d.]+) mm, ([-\d.]+) mm\): (Track|Via) \[([^\]]*)\] on (\S+)(?:, length ([\d.]+) mm)?", block):
+            faulted.append((m.group(3), float(m.group(1)), float(m.group(2)), m.group(4), m.group(5), float(m.group(6)) if m.group(6) else None))
     if not faulted:
         return
-    def named(kind, pts):
-        return any(k == kind and any(abs(x - px) < 0.002 and abs(y - py) < 0.002 for px, py in pts) for k, x, y in faulted)
+    def near(a, b):
+        return abs(a - b) < 0.002
     b = pcbnew.LoadBoard(board_path); removed = 0
-    for item in list(b.GetTracks()):
+    for item in list(b.GetTracks()):                                  # the item the report names: kind, a position, net, layer and length
         if item.IsLocked():
             continue
+        net = str(item.GetNetname())
         if item.GetClass() == "PCB_VIA":
-            hit = named("Via", [(item.GetPosition().x / 1e6, item.GetPosition().y / 1e6)])
+            x, y = item.GetPosition().x / 1e6, item.GetPosition().y / 1e6
+            hit = any(k == "Via" and n == net and near(x, fx) and near(y, fy) for k, fx, fy, n, _, _ in faulted)
         else:
-            hit = named("Track", [(item.GetStart().x / 1e6, item.GetStart().y / 1e6), (item.GetEnd().x / 1e6, item.GetEnd().y / 1e6)])
+            pts = [(item.GetStart().x / 1e6, item.GetStart().y / 1e6), (item.GetEnd().x / 1e6, item.GetEnd().y / 1e6)]
+            layer, length = b.GetLayerName(item.GetLayer()), item.GetLength() / 1e6
+            hit = any(k == "Track" and n == net and l == layer and (fl is None or near(length, fl)) and any(near(x, fx) and near(y, fy) for x, y in pts)
+                      for k, fx, fy, n, l, fl in faulted)
         if hit:
             b.Remove(item); removed += 1
     if removed:

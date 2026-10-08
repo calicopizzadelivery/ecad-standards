@@ -756,7 +756,7 @@ class Placer:
             if region.get("island"):
                 polys[region["island"][1]].append(region["island"][3])
         if not polys:
-            return 0, 0, []
+            return 0, 0, [], []
         def inside(pt, outline):
             x, y = pt; n = len(outline); ok = False
             for i in range(n):
@@ -808,7 +808,7 @@ class Placer:
                 if any(seg_dist((x, y), sa, sb) < hw + shw + 0.3 for sa, sb, shw in lane_segs): return False
             return True
         counts = getattr(L, "RAIL_VIAS", {})
-        placed, served, no_room = 0, 0, []
+        placed, served, no_room, short = 0, 0, [], []
         for ref, fp in self.fps.items():
             if ref in L.HOLES: continue
             side = "B" if fp.IsFlipped() else "F"
@@ -819,34 +819,48 @@ class Placer:
                 px, py = p.GetPosition().x / 1e6, p.GetPosition().y / 1e6
                 if not any(inside((px, py), o) for o in polys[net]): continue
                 cls = self.classes.get(net, "Default"); want = counts.get(cls, 1)
-                dia, _ = self.via_geometry.get(cls, self.via_geometry.get("Default", (0.6, 0.3))); r = dia / 2
+                cdia, cdrill = self.via_geometry.get(cls, self.via_geometry.get("Default", (0.6, 0.3)))
+                ddia, ddrill = self.via_geometry.get("Default", (0.6, 0.3))
                 half = max(p.GetSize().x, p.GetSize().y) / 2e6
                 track, _ = self.class_of(net); sw = min(track, min(p.GetSize().x, p.GetSize().y) / 1e6)
                 dirs = sorted([(1, 0), (-1, 0), (0, 1), (0, -1), (0.707, 0.707), (-0.707, 0.707), (0.707, -0.707), (-0.707, -0.707)],
                               key=lambda d: -((px - fx) * d[0] + (py - fy) * d[1]))   # outward from the part first
-                got = []
-                for dx, dy in dirs:
-                    got = []; prev = (px, py)
-                    for k in range(want):
-                        step = None
-                        for dist in [half + r + 0.35 + (k * (dia + 0.35)) + j * 0.25 for j in range(10)]:
-                            vx, vy = px + dx * dist, py + dy * dist
-                            if via_ok(net, ref, vx, vy, r) and stub_ok(net, ref, prev, (vx, vy), sw / 2):
-                                step = (vx, vy); break
-                        if step is None: break
-                        got.append(step); vias_here.append((step[0], step[1], r)); prev = step
-                    if len(got) == want: break
-                    for g in got: vias_here.remove((g[0], g[1], r))
-                    got = []
+                def chain(n, dia):
+                    """n vias of this diameter in a straight run beside the pad, in the first direction that takes them all."""
+                    r = dia / 2
+                    for dx, dy in dirs:
+                        got = []; prev = (px, py)
+                        for k in range(n):
+                            step = None
+                            for dist in [half + r + 0.35 + (k * (dia + 0.35)) + j * 0.25 for j in range(10)]:
+                                vx, vy = px + dx * dist, py + dy * dist
+                                if via_ok(net, ref, vx, vy, r) and stub_ok(net, ref, prev, (vx, vy), sw / 2):
+                                    step = (vx, vy); break
+                            if step is None: break
+                            got.append(step); vias_here.append((step[0], step[1], r)); prev = step
+                        if len(got) == n: return got
+                        for g in got: vias_here.remove((g[0], g[1], r))
+                    return []
+                # the class's count of the class's via; failing that fewer of them, down to one; failing that the default via,
+                # the class's count down to one: the rail is reached by whatever fits and the shortfall is reported
+                tries = [(n, cdia, cdrill) for n in range(want, 0, -1)]
+                if (ddia, ddrill) != (cdia, cdrill):
+                    tries += [(n, ddia, ddrill) for n in range(want, 0, -1)]
+                got, used = [], None
+                for n, dia, drill in tries:
+                    got = chain(n, dia)
+                    if got: used = (n, dia, drill); break
                 if not got:
                     no_room.append(f"{ref}.{p.GetNumber()}"); continue
+                if used != (want, cdia, cdrill):
+                    short.append(f"{ref}.{p.GetNumber()} {used[0]}x{used[1]:g} for {want}x{cdia:g}")
                 layer = "F.Cu" if side == "F" else "B.Cu"
                 prev = (px, py)
                 for g in got:
                     self.tracks.append((net, layer, sw, prev, g)); lane_segs.append((prev, g, sw / 2)); prev = g
-                    self.add_via(net, g); placed += 1
+                    self.add_via(net, g, (used[1], used[2])); placed += 1
                 served += 1
-        return placed, served, no_room
+        return placed, served, no_room, short
 
     def corridor(self, name, a, b, hw):
         """A leg's keep-out box, clipped where it enters the courtyard of a part the lane joins (handled by the caller)."""
@@ -915,9 +929,10 @@ class Placer:
             self.lanes.append((name, tuple(box)))
 
     def add_via(self, net, p, size=None):
+        """A via of the net's class (or of `size`, a (diameter, drill) pair: a rail via that fell back to a smaller one)."""
         track, clear = self.class_of(net)
         cls = self.classes.get(net, "Default")
-        dia, drill = self.via_geometry.get(cls, self.via_geometry.get("Default", (0.6, 0.3)))
+        dia, drill = size or self.via_geometry.get(cls, self.via_geometry.get("Default", (0.6, 0.3)))
         self.vias.append((net, p[0], p[1], dia, drill))
         return dia
 
@@ -1648,14 +1663,32 @@ def drc_gate(path):
         entries = re.split(r"\n(?=\[)", m.group(0))
         return entries[0] + "".join("\n" + e for e in sorted(entries[1:]))
     txt = re.sub(r"^\*\* Found[^\n]*\n(?:\[.*?\n)+?(?=\n\*\*|\Z)", lambda m: sort_section(m), txt, flags=re.M | re.S)
-    txt = re.sub(r"Pad (B12|B9|B4|B1) \[", lambda m: "Pad " + {"B12": "A1", "B9": "A4", "B4": "A9", "B1": "A12"}[m.group(1)] + " [", txt)
+    # the USB-C receptacles' coincident pad pairs (A1/B12, A4/B9, A9/B4, A12/B1 at one position each) are named by the A pad,
+    # since kicad-cli names either; no other footprint's pads are touched
+    usbc = set(re.findall(r'\(footprint "[^"]*USB_C_Receptacle[^"]*"(?:(?!\(footprint ).)*?\(property "Reference" "([^"]+)"',
+                          open(path, encoding="utf-8").read(), re.S))
+    if usbc:
+        txt = re.sub(r"Pad (B12|B9|B4|B1) \[([^\]]*)\] of (" + "|".join(map(re.escape, sorted(usbc))) + r") ",
+                     lambda m: "Pad " + {"B12": "A1", "B9": "A4", "B4": "A9", "B1": "A12"}[m.group(1)] + f" [{m.group(2)}] of {m.group(3)} ", txt)
+    # the unconnected items as a tally per net: kicad-cli names a different pair of items for the same missing connection on
+    # every run, so the entries themselves cannot be reproducible; the count per net is
+    def tally_unconnected(m):
+        entries = re.split(r"\n(?=\[)", m.group(0))
+        nets = collections.Counter()
+        for e in entries[1:]:
+            n = re.search(r"\[([^\]]*)\] of|\[([^\]]*)\] on", e)
+            nets[(n.group(1) or n.group(2)) if n else "?"] += 1
+        head = entries[0].replace("unconnected pads", "unconnected pads, as a tally per net")
+        return head + "".join(f"\n[unconnected_items]: {k} missing connection(s) on {n}" for n, k in sorted(nets.items(), key=lambda kv: (-kv[1], kv[0])))
+    txt = re.sub(r"^\*\* Found \d+ unconnected pads \*\*\n(?:\[.*?\n)+?(?=\n\*\*|\Z)", tally_unconnected, txt, flags=re.M | re.S)
     open(rep, "w", encoding="utf-8").write(txt)
     kinds = collections.Counter()
     for m in re.finditer(r"^\[(\w+)\][^\n]*\n\s*(?:(?:Rule: [^;]*|Local override); )?(\w+)", txt, re.M):   # the severity after "Rule: x; " or "Local override; "
         kinds[(m.group(1), m.group(2))] += 1
     errors = {k: v for (k, sev), v in kinds.items() if sev == "error" and k != "unconnected_items"}
     warnings = {k: v for (k, sev), v in kinds.items() if sev != "error" and k != "unconnected_items"}
-    unconnected = sum(v for (k, sev), v in kinds.items() if k == "unconnected_items")
+    unconnected = sum(int(m.group(1)) for m in re.finditer(r"^\[unconnected_items\]: (\d+) missing connection", txt, re.M)) or \
+                  sum(v for (k, sev), v in kinds.items() if k == "unconnected_items")
     print(f"DRC: {sum(errors.values())} error(s) {errors}; {unconnected} unconnected (unrouted); warnings {warnings}")
     return errors
 
@@ -1720,8 +1753,9 @@ def main(directives=None, out=None, project=None, house_fp=None):
     P.resolve_lanes()
     P.place_satellites()
     residual = P.relax()
-    rail_placed, rail_pads, rail_none = P.rail_vias()
-    print(f"rail vias: {rail_placed} beside {rail_pads} pads on plane nets" + (f"; no room at {len(rail_none)}: {' '.join(rail_none[:12])}" if rail_none else ""))
+    rail_placed, rail_pads, rail_none, rail_short = P.rail_vias()
+    print(f"rail vias: {rail_placed} beside {rail_pads} pads on plane nets" + (f"; no room at {len(rail_none)}: {' '.join(rail_none[:12])}" if rail_none else "")
+          + (f"; short at {len(rail_short)} (placed for wanted): {', '.join(rail_short[:12])}" if rail_short else ""))
     omitted, outlined, not_outlined, stepped_out = P.silkscreen()
     # ---- the lanes' copper
     for net, layer, width, (x0, y0), (x1, y1) in P.tracks:

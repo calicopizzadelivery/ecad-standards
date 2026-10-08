@@ -15,7 +15,10 @@ classes) and its directives module, and writes `OUT_DIR/PROJECT.kicad_pcb`,
 connectors are locked, ICs anchored, lanes laid, every other part placed at
 the pin it serves, small parts on the bottom where the directives allow,
 designators placed or omitted by the silkscreen rule; the output is
-byte-identical between runs. Run once per placement pass.
+byte-identical between runs (the DRC report's unconnected items as a tally
+per net, since kicad-cli names a different pair of items for the same
+missing connection on every run; the USB-C receptacles' coincident pad
+pairs by their A pad). Run once per placement pass.
 
 The directives module is the contract. Required:
 
@@ -82,7 +85,8 @@ footprint's own frame; sides turn with the anchor's rotation), `TEMPLATED`
 `SIDES` (`{ref: "F"|"B"}`: a part's side by directive, section 3.7; the parts
 it hosts follow it, except indicator LEDs with their series resistors, ESD
 and connectors), `RAIL_VIAS` (`{class: count}`: vias beside each SMD pad on a
-plane net, one by default, section 4),
+plane net, one by default, section 4; what fits when the class's vias do
+not, fewer and then the default via, the shortfall reported),
 `COPPER_VOIDS` (`{name: (x0, y0, x1, y1)}`: no plane or pour on any layer,
 tracks and vias pass). Read by `copper.py` rather than the placer:
 `FLOODS`, `STITCH`, `STITCH_VIA`.
@@ -98,8 +102,12 @@ exports the board to Specctra (locked tracks and vias fixed, planes as
 planes), runs FreeRouting headless, imports the session and saves at once,
 then, in a fresh process (`--post BOARD`: after the import even a reloaded
 board can come back as a bare SWIG pointer), removes whatever the router laid
-on a pair net (the lanes carry the pairs), floors the router's sub-minimum
-stubs, writes the board in canonical order and runs the DRC gate. The class
+on a pair net whose pads the lanes all reach (the lanes carry the pairs; a
+pair net with a pad off the lane keeps the router's copper and is named),
+then in another (`--post2`) floors the router's sub-minimum stubs, lists the
+segments on a wide class that run on at a pad's width beyond the pad (the
+router's pad-entry necking: the hand pass widens them), writes the board in
+canonical order and runs the DRC gate. The class
 widths given to the router are capped at `--max-width` (2.0 mm): the 6 A
 class runs on the rails through the rail vias. Every clearance in the
 export is 10 µm over the project's, so the router's rounding never comes
