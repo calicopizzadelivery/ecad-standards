@@ -143,7 +143,10 @@ Rule areas that forbid pours (the copper voids) are via keep-outs too.
 Idempotent: a flood that exists by name is kept, and a
 via of the net within half a pitch of a grid point counts as that point, so
 it reruns over a board whose routing has changed. Writes the board in
-canonical order and runs the DRC gate. It is the last generated step before
+canonical order with its fills (saved unfilled, reloaded and filled afresh,
+so the file is the same from any starting state and the pours are in the
+file as it is opened and rendered) and runs the DRC gate. It is the last
+generated step before
 the hand pass.
 
 ## harvest.py: measured practice (layout.md section 9)

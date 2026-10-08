@@ -263,7 +263,11 @@ honoured exactly and the start is reproducible:
    reach it on fewer than two layers (a via the plane alone would hold is
    a dangling via); a pour island that holds a pad of the net but no via
    gets one inside it, where there is room, so no ground pad sits on a
-   flood the plane never reaches. The DRC gate runs again. A pad the routing crowds so
+   flood the plane never reaches. The board is saved with its fills, in
+   canonical order (saved unfilled, reloaded and filled afresh: KiCad's fill
+   of a board loaded without fills is byte-identical from run to run, a
+   refill over existing fills is not), so the pours are in the file as it is
+   opened and rendered. The DRC gate runs again. A pad the routing crowds so
    the flood reaches it with one spoke is a starved-thermal warning: the
    hand pass moves the track or accepts it where the pad has its own via.
 12. The board file is reproducible like the schematic

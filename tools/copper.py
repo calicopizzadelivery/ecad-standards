@@ -5,7 +5,7 @@ directives' FLOODS, and ground stitching vias on a grid, clear of everything alr
     copper.py BOARD.kicad_pcb DIRECTIVES.py [--no-stitch]
 
 Runs over the routed board in place (idempotent: a flood that exists by name is kept, stitching skips what is
-there), writes the board in canonical order and runs the DRC gate. Directives:
+there), writes the board in canonical order with its fills and runs the DRC gate. Directives:
 
     FLOODS = [("GND_F", "GND", "F.Cu", outline), ("GND_B", "GND", "B.Cu", outline), ("PSU_GND_F", "PSU_GND", "F.Cu", island), ...]
     STITCH = [{"net": "GND", "pitch": 5.0, "keep_out": [(x0, y0, x1, y1), ...], "margin": 1.5},
@@ -14,6 +14,7 @@ there), writes the board in canonical order and runs the DRC gate. Directives:
 """
 import os, re, sys, math, argparse, importlib.util, collections, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import io, contextlib
 import pcbnew
 import placer
 
@@ -224,10 +225,21 @@ def main():
                            capture_output=True, text=True, check=True)
         dangling = next((int(l) for l in reversed(r.stdout.splitlines()) if l.strip().isdigit()), 0)   # the count, past SWIG's chatter
         board = pcbnew.LoadBoard(path)
-    for z in board.Zones():                                           # fills are not kept in the file (the DRC gate refills)
+    # the board is saved with its fills: the pours are then in the file as it is opened and rendered. Saved unfilled,
+    # reloaded and filled afresh, since KiCad's fill of a board loaded without fills is byte-identical from run to run
+    # while a refill over existing fills (or over their cached connectivity) is not: the file is the same from any
+    # starting state, and a second pass changes nothing
+    for z in board.Zones():
         z.UnFill()
     pcbnew.SaveBoard(path, board, True)
-    text = open(path, encoding="utf-8").read(); placer.PROJECT = os.path.splitext(os.path.basename(path))[0]
+    placer.PROJECT = os.path.splitext(os.path.basename(path))[0]
+    text = open(path, encoding="utf-8").read()                         # (read first: opening to write truncates the file)
+    open(path, "w", encoding="utf-8").write(placer.canonical(text))    # canonical before the fill: the fill follows the zones' order
+    board = pcbnew.LoadBoard(path)
+    with contextlib.redirect_stdout(io.StringIO()):
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    pcbnew.SaveBoard(path, board, True)
+    text = open(path, encoding="utf-8").read()
     open(path, "w", encoding="utf-8").write(placer.canonical(text))
     print(f"floods added: {' '.join(added) or '(already there)'}; stitching vias placed: {len(placed)}" + (f" ({pruned} more dropped for cutting an island off a rail)" if pruned else "")
           + (f" ({dangling} more dropped where no flood reaches them)" if dangling else ""))
