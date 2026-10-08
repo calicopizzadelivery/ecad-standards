@@ -94,8 +94,10 @@ regions on one layer carve a base plane under them.
     tools/autoroute.py OUT_DIR/PROJECT.kicad_pcb /path/to/freerouting [--passes 30] [--threads 1]
 
 exports the board to Specctra (locked tracks and vias fixed, planes as
-planes), runs FreeRouting headless, imports the session and writes the board
-in canonical order. One thread on purpose: FreeRouting's multi-threaded
+planes), runs FreeRouting headless, imports the session and saves at once,
+then floors the router's sub-minimum stubs, writes the board in canonical
+order and runs the DRC gate in a fresh process (`--post BOARD`: after the
+import even a reloaded board can come back as a bare SWIG pointer). One thread on purpose: FreeRouting's multi-threaded
 optimiser produces clearance violations. Run it once after the placer; the
 board file is the source of truth from then on.
 
@@ -113,7 +115,9 @@ default): on the grid point or at the nearest clear spot within half a
 pitch, clear of pads, tracks and vias by 0.3 mm, out of every via
 keep-out, never within the fill's minimum width of another net's zone
 edge; then it fills the zones and drops any via that cut a new island off
-another net's zone. Idempotent: a flood that exists by name is kept, and a
+another net's zone, and any via the filled floods reach on fewer than two
+layers (that sweep runs in its own process: removing board-owned vias and
+then touching zones corrupts pcbnew's Python proxies). Idempotent: a flood that exists by name is kept, and a
 via of the net within half a pitch of a grid point counts as that point, so
 it reruns over a board whose routing has changed. Writes the board in
 canonical order and runs the DRC gate. It is the last generated step before

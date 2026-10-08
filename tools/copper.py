@@ -12,7 +12,7 @@ there), writes the board in canonical order and runs the DRC gate. Directives:
               {"net": "PSU_GND", "pitch": 5.0, "inside": [(x0, y0, x1, y1), ...]}]
     STITCH_VIA = (0.6, 0.3)
 """
-import os, re, sys, math, argparse, importlib.util
+import os, re, sys, math, argparse, importlib.util, collections, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pcbnew
 import placer
@@ -123,6 +123,30 @@ def islands(board, skip_nets):
     return out
 
 
+def unreached(board, nets):
+    """Stitching vias the floods do not reach: a via must touch its net's copper on two layers at least (the plane
+    and a flood); one the fill leaves on the plane alone is a dangling via and comes out."""
+    fills = collections.defaultdict(list)                        # net -> [(layer, filled polys)]
+    for z in board.Zones():
+        if not z.GetIsRuleArea() and str(z.GetNetname()) in nets:
+            for l in z.GetLayerSet().Seq():
+                fills[str(z.GetNetname())].append((l, z.GetFilledPolysList(l)))
+    ends = set()                                                   # a stitching via has no track at it, this pass's or an earlier one's
+    for t in board.GetTracks():
+        if t.GetClass() == "PCB_TRACK":
+            for p in (t.GetStart(), t.GetEnd()):
+                ends.add((p.x, p.y))
+    gone = []
+    for v in list(board.GetTracks()):
+        if v.GetClass() != "PCB_VIA" or str(v.GetNetname()) not in nets or (v.GetPosition().x, v.GetPosition().y) in ends:
+            continue
+        net = str(v.GetNetname()); pos = v.GetPosition()
+        layers = {l for l, polys in fills[net] if polys.Contains(pos)}
+        if len(layers) < 2:
+            board.Remove(v); gone.append(v)
+    return len(gone)
+
+
 def prune(board, before, placed, skip_nets):
     """Fill, and drop every stitching via that cut a new island off a zone of another net (a sliver between the via,
     a pad and the zone's edge: not foreseeable without the fill). Returns the number removed."""
@@ -163,7 +187,7 @@ def main():
         if name in have:
             continue
         add_flood(board, name, net, layer, outline, netinfo); added.append(name)
-    placed = []; pruned = 0
+    placed = []; pruned = 0; dangling = 0
     if not a.no_stitch and getattr(L, "STITCH", []):
         nets = {cfg["net"] for cfg in L.STITCH}
         pcbnew.ZONE_FILLER(board).Fill(board.Zones()); before = islands(board, nets)
@@ -171,14 +195,28 @@ def main():
         for cfg in L.STITCH:
             stitch(board, L, cfg, netinfo, via_dia, via_drill, placed)
         pruned = prune(board, before, placed, nets)
+        pcbnew.SaveBoard(path, board, True)                            # the dangling-via sweep in its own process: removing board-owned
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), "--unreached", path, a.directives],   # vias corrupts the proxies
+                           capture_output=True, text=True, check=True)
+        dangling = next((int(l) for l in reversed(r.stdout.splitlines()) if l.strip().isdigit()), 0)   # the count, past SWIG's chatter
+        board = pcbnew.LoadBoard(path)
     for z in board.Zones():                                           # fills are not kept in the file (the DRC gate refills)
         z.UnFill()
     pcbnew.SaveBoard(path, board, True)
     text = open(path, encoding="utf-8").read(); placer.PROJECT = os.path.splitext(os.path.basename(path))[0]
     open(path, "w", encoding="utf-8").write(placer.canonical(text))
-    print(f"floods added: {' '.join(added) or '(already there)'}; stitching vias placed: {len(placed)}" + (f" ({pruned} more dropped for cutting an island off a rail)" if pruned else ""))
+    print(f"floods added: {' '.join(added) or '(already there)'}; stitching vias placed: {len(placed)}" + (f" ({pruned} more dropped for cutting an island off a rail)" if pruned else "")
+          + (f" ({dangling} more dropped where no flood reaches them)" if dangling else ""))
     placer.drc_gate(path)
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 4 and sys.argv[1] == "--unreached":            # the sweep, alone in its process: fill, remove, save, report the count
+        spec = importlib.util.spec_from_file_location("directives", sys.argv[3]); L = importlib.util.module_from_spec(spec); spec.loader.exec_module(L)
+        board = pcbnew.LoadBoard(sys.argv[2])
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+        n = unreached(board, {cfg["net"] for cfg in getattr(L, "STITCH", [])})
+        pcbnew.SaveBoard(sys.argv[2], board, True)
+        print(n)
+    else:
+        main()

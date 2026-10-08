@@ -54,6 +54,13 @@ def main():
     if not pcbnew.ImportSpecctraSES(b, ses):
         raise SystemExit("SES import failed")
     pcbnew.SaveBoard(board_path, b, True)                           # save at once: the board object is not usable after the import
+    # the rest in a fresh process: after ImportSpecctraSES even a reloaded board can come back as a bare SWIG pointer
+    subprocess.run([sys.executable, os.path.abspath(__file__), "--post", board_path], check=True)
+
+
+def post(board_path):
+    """After the session import, in its own process: the router's pad-entry stubs floored to the fab's minimum width,
+    the Specctra files removed, the board written in canonical order, the DRC gate run."""
     b = pcbnew.LoadBoard(board_path)
     floor = b.GetDesignSettings().m_TrackMinWidth                   # the router's pad-entry stubs can come in under the fab's floor
     widened = 0
@@ -63,7 +70,10 @@ def main():
     if widened:
         print(f"   {widened} stubs widened to the {floor / 1e6:.3f} mm floor")
     pcbnew.SaveBoard(board_path, b, True)
-    os.remove(dsn); os.remove(ses)
+    base = os.path.splitext(board_path)[0]
+    for f in (base + ".dsn", base + ".ses"):
+        if os.path.exists(f):
+            os.remove(f)
     import placer
     text = open(board_path, encoding="utf-8").read()
     placer.PROJECT = os.path.splitext(os.path.basename(board_path))[0]
@@ -74,4 +84,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == "--post":
+        post(sys.argv[2])
+    else:
+        main()

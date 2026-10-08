@@ -227,10 +227,11 @@ honoured exactly and the start is reproducible:
    clear of every pad, track and via by the clearance, out of every via
    keep-out and the directives' rectangles, never within the fill's minimum
    width of another net's zone edge, and dropped where the fill shows one
-   cut an island off a rail. The DRC gate runs again. A pad the routing
-   crowds so the flood reaches it with one spoke is a starved-thermal
-   warning: the hand pass moves the track or accepts it where the pad has
-   its own via.
+   cut an island off a rail, and dropped again where the filled floods
+   reach it on fewer than two layers (a via the plane alone would hold is
+   a dangling via). The DRC gate runs again. A pad the routing crowds so
+   the flood reaches it with one spoke is a starved-thermal warning: the
+   hand pass moves the track or accepts it where the pad has its own via.
 12. The board file is reproducible like the schematic
    ([kicad-generation.md](kicad-generation.md)): `pcbnew` draws random UUIDs
    and writes items in their order, so the generator sorts footprints by
@@ -461,7 +462,11 @@ assembler is consulted on double-sided reflow before the first order.
 - **Pads join zones through thermal reliefs** (0.5 mm gap, 0.5 mm spokes,
   four where the pad allows), solid only where the directives ask for it
   (a regulator's exposed pad, a current path); zones fill with a 0.2 to
-  0.25 mm minimum width at 0.25 to 0.3 mm clearance. (Practice: every zone
+  0.25 mm minimum width at 0.25 to 0.3 mm clearance. A pad the routing
+  crowds so a zone reaches it with one spoke is connected: the generator
+  writes that check (`starved_thermal`) into the project file at warning
+  severity, KiCad's default being error, so the DRC gate lists it for the
+  hand pass instead of failing on it. (Practice: every zone
   on every reference board uses thermal reliefs, at 0.5 mm; zone minimum
   width 0.2 mm, clearance 0.24 mm.)
 - **Ground floods the outer layers** around the routing, stitched to the
