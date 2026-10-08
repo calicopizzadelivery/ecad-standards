@@ -42,7 +42,7 @@ def main():
         txt = re.sub(r"(\(layer %s\n\s*\(type )signal" % re.escape(layer), r"\1power", txt, count=1)
     cap = int(round(a.max_width * 1000))                              # the DSN is in um
     txt = re.sub(r"\(width (\d+)\)", lambda m: f"(width {min(int(m.group(1)), cap)})", txt)
-    txt = re.sub(r"\(clearance (\d+)", lambda m: f"(clearance {int(m.group(1)) + 10}", txt)   # 10 um over the fab's figure: the router's rounding then never trips DRC
+    txt = re.sub(r"\(clearance (\d+)\)", lambda m: f"(clearance {int(m.group(1)) + 10})", txt)   # 10 um over the project's figure (the typed smd_smd quarter left alone): the router's rounding then never trips DRC
     open(dsn, "w", encoding="utf-8").write(txt)
     print(f"exported {os.path.basename(dsn)} with {fixed} fixed items, {dropped} corridors left out, {hardened} regions hardened, widths capped at {a.max_width} mm, planes on {' '.join(a.plane_layers)}; routing up to {a.passes} passes")
     try:
