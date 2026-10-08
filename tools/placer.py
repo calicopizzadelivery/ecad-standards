@@ -1541,7 +1541,7 @@ def drc_gate(path):
     txt = re.sub(r"Pad (B12|B9|B4|B1) \[", lambda m: "Pad " + {"B12": "A1", "B9": "A4", "B4": "A9", "B1": "A12"}[m.group(1)] + " [", txt)
     open(rep, "w", encoding="utf-8").write(txt)
     kinds = collections.Counter()
-    for m in re.finditer(r"^\[(\w+)\][^\n]*\n\s*(?:Rule: [^;]*; )?(\w+)", txt, re.M):
+    for m in re.finditer(r"^\[(\w+)\][^\n]*\n\s*(?:(?:Rule: [^;]*|Local override); )?(\w+)", txt, re.M):   # the severity after "Rule: x; " or "Local override; "
         kinds[(m.group(1), m.group(2))] += 1
     errors = {k: v for (k, sev), v in kinds.items() if sev == "error" and k != "unconnected_items"}
     warnings = {k: v for (k, sev), v in kinds.items() if sev != "error" and k != "unconnected_items"}

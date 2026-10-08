@@ -58,9 +58,17 @@ the copies it embeds in the schematic are byte-equal to the library.
 ## Footprints and models
 
 KiCad's footprints are used while they fit the part exactly. A footprint that
-has to be made goes in `footprints/calico.pretty`, is checked with
-`check_footprint.py`, and is named by the KLC pattern (IPC-7351 for
-packages). 3D models go with it under `3dmodels/`, on LFS.
+has to be made is built by `tools/build_footprints.py` from the manufacturer's
+drawing, which its description cites with the dimensions taken from it; it
+goes in `footprints/calico.pretty`, is checked with `check_footprint.py`, and
+is named by the KLC pattern (IPC-7351 for packages). The builder is the
+source of truth: its `--check` runs in CI, with no KiCad installed, so a
+footprint is self-contained Python, never read from KiCad's library at build
+time. A KiCad footprint that needs one change (a pad trimmed for a fab's
+minimum) is rebuilt pad for pad from KiCad's numbers, field for field, with
+the change named in its description and as `_<Change>` on its name, and keeps
+the KiCad part's 3D model. 3D models for new footprints go with them under
+`3dmodels/`, on LFS.
 
 ## Part numbers
 
