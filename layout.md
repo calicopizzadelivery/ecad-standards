@@ -143,7 +143,11 @@ honoured exactly and the start is reproducible:
    length-matching bump on the shorter member where it stands clear of
    every other lane; it checks that the P member leaves one end on the same
    side it arrives at the other, and refuses the lane otherwise, since a
-   crossing is fixed in the schematic (section 3.8), not in copper.
+   crossing is fixed in the schematic (section 3.8), not in copper. A
+   pair's members are measured over everything laid for the pair, the
+   through-hole stubs and pad escapes included (the receptacle bridges
+   excepted: they are not signal path), and matched by a bump where one
+   fits; where none fits the report says so with the mismatch.
 6. **Every other part is placed at the pin it serves, in its city.** The
    islands are read from the sheets (3.1): symbols a wire joins (a pin end
    on a wire's end, on its run, or on another pin), transitively, plus
@@ -195,7 +199,9 @@ honoured exactly and the start is reproducible:
    narrower than the void. Those far parts, the members placed apart from their city, and
    the indicator LEDs (which belong where they can be seen, not at the pin
    that drives them), are the first hand work.
-7. Planes are drawn as zones (the ground plane on L2, the rails as regions
+7. The rail vias of section 4 are dropped beside the pads of every plane
+   net, the class's count each, and reported with the pads that had no
+   room. Planes are drawn as zones (the ground plane on L2, the rails as regions
    of L3 with the base rail underneath at the lowest priority, an isolated
    ground island where there is one), stopping a millimetre short of the
    edge, and a `.kicad_dru` carries the rules the directives need (nothing
@@ -214,9 +220,15 @@ honoured exactly and the start is reproducible:
 10. **The rest is routed by FreeRouting** (`tools/autoroute.py`): the board
    goes out as Specctra with every lane track and via locked (fixed) and
    the planes as planes, FreeRouting runs headless on one thread, the
-   session comes back and the board is written in canonical order. What the
-   autorouter leaves unrouted or in violation is finished by hand in KiCad,
-   and from then on the board file is the source of truth.
+   session comes back and the board is saved at once; in a fresh process the
+   copper the router laid on a pair net (a stub to a pad centre, a second
+   path round a bridge: the lanes connect those nets by themselves) is
+   removed, the router's sub-minimum stubs are floored, the board is written
+   in canonical order and the gate runs. The class widths the router sees
+   are capped at 2 mm (the 6 A class runs on the rails through its vias, not
+   as a track). What the autorouter leaves unrouted or in violation is
+   finished by hand in KiCad, and from then on the board file is the source
+   of truth.
 11. **The copper after routing** (`tools/copper.py`, run over the routed
    board, and again whenever the routing changes: it adds only what is
    missing). The ground floods of section 4 are drawn on both outer layers
@@ -229,7 +241,9 @@ honoured exactly and the start is reproducible:
    width of another net's zone edge, and dropped where the fill shows one
    cut an island off a rail, and dropped again where the filled floods
    reach it on fewer than two layers (a via the plane alone would hold is
-   a dangling via). The DRC gate runs again. A pad the routing crowds so
+   a dangling via); a pour island that holds a pad of the net but no via
+   gets one inside it, where there is room, so no ground pad sits on a
+   flood the plane never reaches. The DRC gate runs again. A pad the routing crowds so
    the flood reaches it with one spoke is a starved-thermal warning: the
    hand pass moves the track or accepts it where the pad has its own via.
 12. The board file is reproducible like the schematic
@@ -485,7 +499,16 @@ assembler is consulted on double-sided reflow before the first order.
   parent's current rating (13.6, IPC-2152 model, 10 °C rise) and the net
   class states the equivalent trace width.
 - **Vias carry current in arrays**: two per layer change for the 3 A
-  classes, more for the 6 A class, placed where the polygon narrows.
+  classes, more for the 6 A class, placed where the polygon narrows. The
+  generator drops them before the router (section 2, step 7): every SMD pad
+  on a net that has a plane or rail under it gets its class's vias
+  (`RAIL_VIAS`, one by default) beside it, joined by a stub at the class
+  width, outward from the part, clear of every other pad, via and lane by
+  the clearance and of other nets' pads by a solder-mask web, so the current
+  reaches the copper that carries it and the router has nothing to route
+  for that pad. A pad with no room beside it (the packed rings leave none
+  at many) is reported and left to the router and the hand pass; a
+  through-hole pad reaches the planes by itself.
 - Planes stop short of the board edge by the fab's copper-to-edge minimum
   plus a margin, and clear the mounting holes and their standoff pads.
 - No copper under crystals, under the magnetics side of an Ethernet jack, or
