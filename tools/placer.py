@@ -1664,11 +1664,13 @@ class Placer:
         return omitted, outlined, not_outlined, stepped_out
 
 
-def rail_pieces(step=0.25, islands=()):
+def rail_pieces(step=0.1, islands=()):
     """Per plane net and layer, the pieces its copper falls into once the higher-priority planes of other nets carve it
-    (the directives' PLANES and the regions' islands, rasterised at `step` mm): {(net, layer): [piece names]}, a piece
-    named by the planes whose centres it holds. A rail in more than one piece is a directive error (layout.md 4): the
-    router does not join the pieces of a plane net, and a via in a carved patch reaches nothing."""
+    (the directives' PLANES and the regions' islands, rasterised at `step` mm, and within a rasterised piece the planes
+    joined only where their outlines overlap or touch exactly: a gap narrower than the step is a gap in the copper too):
+    {(net, layer): [piece names]}, a piece named by the planes whose centres it holds. A rail in more than one piece is a
+    directive error (layout.md 4): the router does not join the pieces of a plane net, and a via in a carved patch
+    reaches nothing."""
     covers = [(p[1], p[2], p[3], p[4] if len(p) > 4 else 0, p[0]) for p in L.PLANES] + \
              [(i[1], i[2], i[3], i[4] if len(i) > 4 else 0, i[0]) for i in islands]
     nx, ny = int(W / step) + 1, int(H / step) + 1
@@ -1699,9 +1701,24 @@ def rail_pieces(step=0.25, islands=()):
                 if c in seen or top.get(c, (None, None))[1] != net: continue
                 seen.add(c); piece.add(c)
                 stack += [(c[0] + 1, c[1]), (c[0] - 1, c[1]), (c[0], c[1] + 1), (c[0], c[1] - 1)]
-            names = [name for n2, lay, outline, _, name in covers if n2 == net and lay == layer
-                     and (int(sum(p[0] for p in outline) / len(outline) / step), int(sum(p[1] for p in outline) / len(outline) / step)) in piece]
-            out.setdefault((net, layer), []).append(" ".join(names) or f"{len(piece)} cells")
+            members = [(name, outline) for n2, lay, outline, _, name in covers if n2 == net and lay == layer
+                       and (int(sum(p[0] for p in outline) / len(outline) / step), int(sum(p[1] for p in outline) / len(outline) / step)) in piece]
+            if not members:
+                out.setdefault((net, layer), []).append(f"{len(piece)} cells"); continue
+            # the exact test within the rasterised piece: planes join where their outlines overlap or touch, not across a gap
+            def box(o): return (min(p[0] for p in o), min(p[1] for p in o), max(p[0] for p in o), max(p[1] for p in o))
+            boxes = {name: box(o) for name, o in members}
+            def joined(a, b):
+                (ax0, ay0, ax1, ay1), (bx0, by0, bx1, by1) = boxes[a], boxes[b]
+                return ax0 <= bx1 and bx0 <= ax1 and ay0 <= by1 and by0 <= ay1
+            left = [name for name, _ in members]
+            while left:
+                comp, stack = [], [left.pop(0)]
+                while stack:
+                    n = stack.pop(); comp.append(n)
+                    for m in [x for x in left if joined(n, x)]:
+                        left.remove(m); stack.append(m)
+                out.setdefault((net, layer), []).append(" ".join(comp))
     return out
 
 
@@ -1724,8 +1741,8 @@ def drc_gate(path):
     txt = open(rep, encoding="utf-8").read()
     txt = re.sub(r"Created on \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", "Created on 2026-10-03T00:00:00", txt, count=1)
     def sort_section(m):
-        entries = re.split(r"\n(?=\[)", m.group(0))
-        return entries[0] + "".join("\n" + e for e in sorted(entries[1:]))
+        entries = [e.rstrip("\n") for e in re.split(r"\n(?=\[)", m.group(0).rstrip("\n"))]   # each entry without its newline: the
+        return entries[0] + "".join("\n" + e for e in sorted(entries[1:])) + "\n"             # sorted section keeps kicad-cli's shape
     txt = re.sub(r"^\*\* Found[^\n]*\n(?:\[.*?\n)+?(?=\n\*\*|\Z)", lambda m: sort_section(m), txt, flags=re.M | re.S)
     # the USB-C receptacles' coincident pad pairs (A1/B12, A4/B9, A9/B4, A12/B1 at one position each) are named by the A pad,
     # since kicad-cli names either; no other footprint's pads are touched
@@ -1742,9 +1759,11 @@ def drc_gate(path):
         for e in entries[1:]:
             n = re.search(r"\[([^\]]*)\] of|\[([^\]]*)\] on", e)
             nets[(n.group(1) or n.group(2)) if n else "?"] += 1
-        head = entries[0].replace("unconnected pads", "unconnected pads, as a tally per net")
-        return head + "".join(f"\n[unconnected_items]: {k} missing connection(s) on {n}" for n, k in sorted(nets.items(), key=lambda kv: (-kv[1], kv[0])))
-    txt = re.sub(r"^\*\* Found \d+ unconnected pads \*\*\n(?:\[.*?\n)+?(?=\n\*\*|\Z)", tally_unconnected, txt, flags=re.M | re.S)
+        head = entries[0].rstrip("\n").replace("unconnected pads", "unconnected pads, as a tally per net")
+        return head + "".join(f"\n[unconnected_items]: {k} missing connection(s) on {n}" for n, k in sorted(nets.items(), key=lambda kv: (-kv[1], kv[0]))) \
+            + ("\n\n" if m.group(0).endswith("\n\n") else "\n")                           # the blank line before the next header kept
+    # the section is the header and every line to the next header, blank line included (never past a header)
+    txt = re.sub(r"^\*\* Found \d+ unconnected pads \*\*\n(?:(?!\*\* ).*(?:\n|\Z))*", tally_unconnected, txt, flags=re.M)
     open(rep, "w", encoding="utf-8").write(txt)
     kinds = collections.Counter()
     for m in re.finditer(r"^\[(\w+)\][^\n]*\n\s*(?:(?:Rule: [^;]*|Local override); )?(\w+)", txt, re.M):   # the severity after "Rule: x; " or "Local override; "

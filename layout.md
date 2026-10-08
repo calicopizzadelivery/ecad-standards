@@ -212,7 +212,9 @@ honoured exactly and the start is reproducible:
    of L3 at their own priorities, an isolated ground island where there is
    one), stopping a millimetre short of the edge, after the rails gate: each
    rail's copper is rasterised with the higher-priority planes of the other
-   nets carving it, and a rail in more than one piece stops the generation
+   nets carving it, its planes joined only where their outlines overlap or
+   touch (a gap narrower than the raster is a gap in the copper too), and a
+   rail in more than one piece stops the generation
    (the router does not join the pieces of a plane net, and a via in a
    carved patch reaches nothing), so such a rail is redrawn or routed
    instead, in a class at the width its current wants (`--rails
