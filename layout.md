@@ -109,7 +109,10 @@ honoured exactly and the start is reproducible:
 2. Every footprint is loaded from the libraries the schematic names and its
    pads are given the nets from the schematic's XML netlist export, so the
    board starts with a complete ratsnest and the net classes the project
-   file assigns.
+   file assigns. The engine stops when a class the project defines has no
+   net: the project's patterns are globs over the full hierarchical name,
+   so a sheet-local net (`/USB hub/PORT1_VBUS`) is matched only by a
+   pattern that starts with `*`.
 3. Edge connectors are placed on their edges in the stated order, rotated so
    that they mate outward, flush with the edge or on the footprint's own
    "PCB Edge" mark, with a stated gap between bodies and a stated distance
@@ -226,7 +229,10 @@ honoured exactly and the start is reproducible:
    removed, the router's sub-minimum stubs are floored, the board is written
    in canonical order and the gate runs. The class widths the router sees
    are capped at 2 mm (the 6 A class runs on the rails through its vias, not
-   as a track). What the autorouter leaves unrouted or in violation is
+   as a track), and every clearance goes to the router 10 µm over the
+   project's, so its rounding never lands under DRC's figure; a router
+   track the gate still faults is removed and the gate runs again, the
+   connection joining the hand pass. What the autorouter leaves unrouted is
    finished by hand in KiCad, and from then on the board file is the source
    of truth.
 11. **The copper after routing** (`tools/copper.py`, run over the routed

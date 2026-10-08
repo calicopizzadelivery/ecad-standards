@@ -42,6 +42,7 @@ def main():
         txt = re.sub(r"(\(layer %s\n\s*\(type )signal" % re.escape(layer), r"\1power", txt, count=1)
     cap = int(round(a.max_width * 1000))                              # the DSN is in um
     txt = re.sub(r"\(width (\d+)\)", lambda m: f"(width {min(int(m.group(1)), cap)})", txt)
+    txt = re.sub(r"\(clearance (\d+)", lambda m: f"(clearance {int(m.group(1)) + 10}", txt)   # 10 um over the fab's figure: the router's rounding then never trips DRC
     open(dsn, "w", encoding="utf-8").write(txt)
     print(f"exported {os.path.basename(dsn)} with {fixed} fixed items, {dropped} corridors left out, {hardened} regions hardened, widths capped at {a.max_width} mm, planes on {' '.join(a.plane_layers)}; routing up to {a.passes} passes")
     try:
@@ -75,7 +76,14 @@ def post(board_path):
             b.Remove(item); removed += 1
     if removed:
         print(f"   {removed} router tracks and vias on pair nets removed (the lanes carry the pairs)")
-        pcbnew.SaveBoard(board_path, b, True); b = pcbnew.LoadBoard(board_path)
+        pcbnew.SaveBoard(board_path, b, True)
+    # the rest in yet another process: a board reloaded after items were removed comes back as a bare pointer too
+    subprocess.run([sys.executable, os.path.abspath(__file__), "--post2", board_path], check=True)
+
+
+def post2(board_path):
+    """The floors, the canonical save and the DRC gate, in a process that has removed nothing."""
+    b = pcbnew.LoadBoard(board_path)
     floor = b.GetDesignSettings().m_TrackMinWidth                   # the router's pad-entry stubs can come in under the fab's floor
     widened = 0
     for tr in b.GetTracks():
@@ -95,10 +103,50 @@ def post(board_path):
     text = open(board_path, encoding="utf-8").read()
     print(f"imported the session: {text.count(chr(10) + chr(9) + '(segment')} tracks, {text.count(chr(10) + chr(9) + '(via')} vias")
     placer.drc_gate(board_path)
+    # a router track DRC faults (a clearance the router's rounding missed) is not finished copper: it comes out, in a
+    # fresh process, and the gate runs again; the connection joins the hand pass's list
+    subprocess.run([sys.executable, os.path.abspath(__file__), "--post3", board_path], check=True)
+
+
+def post3(board_path):
+    """Remove the unlocked tracks and vias the DRC report faults (errors other than unconnected items), then gate again."""
+    rep = os.path.join(os.path.dirname(board_path), "drc.txt")
+    if not os.path.exists(rep):
+        return
+    txt = open(rep, encoding="utf-8").read()
+    faulted = []                                                      # (kind, x, y) the report names, in mm
+    for block in re.split(r"\n(?=\[)", txt):
+        head = block.splitlines()[0] if block else ""
+        if not head.startswith("[") or head.startswith("[unconnected_items]") or "; error" not in block:
+            continue
+        for m in re.finditer(r"@\(([-\d.]+) mm, ([-\d.]+) mm\): (Track|Via) \[", block):
+            faulted.append((m.group(3), float(m.group(1)), float(m.group(2))))
+    if not faulted:
+        return
+    def named(kind, pts):
+        return any(k == kind and any(abs(x - px) < 0.002 and abs(y - py) < 0.002 for px, py in pts) for k, x, y in faulted)
+    b = pcbnew.LoadBoard(board_path); removed = 0
+    for item in list(b.GetTracks()):
+        if item.IsLocked():
+            continue
+        if item.GetClass() == "PCB_VIA":
+            hit = named("Via", [(item.GetPosition().x / 1e6, item.GetPosition().y / 1e6)])
+        else:
+            hit = named("Track", [(item.GetStart().x / 1e6, item.GetStart().y / 1e6), (item.GetEnd().x / 1e6, item.GetEnd().y / 1e6)])
+        if hit:
+            b.Remove(item); removed += 1
+    if removed:
+        pcbnew.SaveBoard(board_path, b, True)
+        print(f"   {removed} router tracks and vias in DRC violation removed: those connections join the hand pass")
+        subprocess.run([sys.executable, os.path.abspath(__file__), "--post2", board_path], check=True)
 
 
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--post":
         post(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "--post2":
+        post2(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "--post3":
+        post3(sys.argv[2])
     else:
         main()

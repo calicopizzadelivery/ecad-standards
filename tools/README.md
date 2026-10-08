@@ -101,7 +101,11 @@ board can come back as a bare SWIG pointer), removes whatever the router laid
 on a pair net (the lanes carry the pairs), floors the router's sub-minimum
 stubs, writes the board in canonical order and runs the DRC gate. The class
 widths given to the router are capped at `--max-width` (2.0 mm): the 6 A
-class runs on the rails through the rail vias. One thread on purpose: FreeRouting's multi-threaded
+class runs on the rails through the rail vias. Every clearance in the
+export is 10 µm over the project's, so the router's rounding never comes
+out under DRC's figure; a router track the gate still faults is removed in
+a fresh process (`--post3`) and the gate runs again, the connection joining
+the hand pass. One thread on purpose: FreeRouting's multi-threaded
 optimiser produces clearance violations. Run it once after the placer; the
 board file is the source of truth from then on.
 

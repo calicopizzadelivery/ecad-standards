@@ -1665,6 +1665,16 @@ def main(directives=None, out=None, project=None, house_fp=None):
         configure(directives, out, project, house_fp)
     t0 = time.time()
     comps, nets, classes = netlist()
+    # the gate on the classes: one the project defines but no net resolves to is a pattern that matches nothing (the
+    # patterns are globs over the full hierarchical name, so a sheet-local net is matched only by one that starts with *)
+    counts = {c: 0 for c in class_geometry()}
+    for n, c in classes.items():
+        if not n.startswith("unconnected-"):
+            counts[c] = counts.get(c, 0) + 1
+    print("net classes: " + ", ".join(f"{c} {k}" for c, k in counts.items()))
+    empty = [c for c, k in counts.items() if c != "Default" and k == 0]
+    if empty:
+        raise SystemExit(f"net classes with no net: {', '.join(empty)}: a pattern that matches nothing (a sheet-local net's pattern starts with *)")
     board = pcbnew.BOARD()
     board.SetCopperLayerCount(4)
     ds = board.GetDesignSettings(); ds.m_MinThroughDrill = pcbnew.FromMM(0.2)     # the fab's minimum is 0.15; thermal vias in footprints are 0.2
