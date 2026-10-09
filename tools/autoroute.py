@@ -20,6 +20,9 @@ def main():
     ap.add_argument("--plane-layers", nargs="*", default=["In1.Cu", "In2.Cu"], help="layers the router may not route on (planes only)")
     ap.add_argument("--keepout-grow", type=float, default=2.0, help="a rule area named for a .kicad_dru rule goes out as a hard keep-out grown by this much (mm)")
     ap.add_argument("--max-width", type=float, default=2.0, help="cap on the class track widths given to the router (mm): the rails carry the current through the rail vias; the 6 A class is capped")
+    ap.add_argument("--clearance-margin", type=int, default=10, help="um added to every clearance the router sees (0: the project's figures as they are)")
+    ap.add_argument("--small-vias", action="store_true", help="every class may also use the default (smallest) via: a class via that fits nowhere beside a pad fails the connection")
+    ap.add_argument("--fanout", action="store_true", help="FreeRouting's fanout stage on (escape vias from SMD pads before routing), through the design's autoroute_settings")
     a = ap.parse_args()
     board_path = os.path.abspath(a.board); work = os.path.splitext(board_path)[0]
     b = pcbnew.LoadBoard(board_path)
@@ -43,7 +46,15 @@ def main():
         txt = re.sub(r"(\(layer %s\n\s*\(type )signal" % re.escape(layer), r"\1power", txt, count=1)
     cap = int(round(a.max_width * 1000))                              # the DSN is in um
     txt = re.sub(r"\(width (\d+)\)", lambda m: f"(width {min(int(m.group(1)), cap)})", txt)
-    txt = re.sub(r"\(clearance (\d+)\)", lambda m: f"(clearance {int(m.group(1)) + 10})", txt)   # 10 um over the project's figure (the typed smd_smd quarter left alone): the router's rounding then never trips DRC
+    if a.clearance_margin:                                            # over the project's figure (the typed smd_smd quarter left alone): the router's rounding then never trips DRC
+        txt = re.sub(r"\(clearance (\d+)\)", lambda m: f"(clearance {int(m.group(1)) + a.clearance_margin})", txt)
+    if a.small_vias:                                                  # the default via joins every class's use_via list, after the class's own
+        vias = re.findall(r'"(Via\[[^"]*?_(\d+):(\d+)_um)"', txt)
+        if vias:
+            small = min({v for v in vias}, key=lambda v: int(v[1]))[0]
+            txt = re.sub(r'\(use_via "([^"]+)"\)', lambda m: m.group(0) if m.group(1) == small else f'(use_via "{m.group(1)}" "{small}")', txt)
+    if a.fanout:                                                      # read by FreeRouting from the structure: "Applied DSN autoroute settings to routing job"
+        txt = txt.replace("(structure\n", "(structure\n    (autoroute_settings (fanout on) (autoroute on) (postroute on) (vias on) (via_costs 50) (plane_via_costs 5) (start_ripup_costs 100) (start_pass_no 1))\n", 1)
     open(dsn, "w", encoding="utf-8").write(txt)
     print(f"exported {os.path.basename(dsn)} with {fixed} fixed items, {dropped} corridors left out, {hardened} regions hardened, widths capped at {a.max_width} mm, planes on {' '.join(a.plane_layers)}; routing up to {a.passes} passes")
     try:
