@@ -22,7 +22,9 @@ def main():
     ap.add_argument("--max-width", type=float, default=2.0, help="cap on the class track widths given to the router (mm): the rails carry the current through the rail vias; the 6 A class is capped")
     ap.add_argument("--clearance-margin", type=int, default=10, help="um added to every clearance the router sees (0: the project's figures as they are)")
     ap.add_argument("--small-vias", action="store_true", help="every class may also use the default (smallest) via: a class via that fits nowhere beside a pad fails the connection")
-    ap.add_argument("--fanout", action="store_true", help="FreeRouting's fanout stage on (escape vias from SMD pads before routing), through the design's autoroute_settings")
+    ap.add_argument("--fanout", choices=["on", "off"], default=None, help="FreeRouting's fanout stage (escape vias from SMD pads before routing; on by default in 2.4), through the design's autoroute_settings")
+    ap.add_argument("--via-costs", type=int, default=None, help="FreeRouting's via cost (50 by default: lower, more layer changes and often more connections)")
+    ap.add_argument("--ripup-costs", type=int, default=None, help="FreeRouting's starting rip-up cost (100 by default)")
     a = ap.parse_args()
     board_path = os.path.abspath(a.board); work = os.path.splitext(board_path)[0]
     b = pcbnew.LoadBoard(board_path)
@@ -53,8 +55,10 @@ def main():
         if vias:
             small = min({v for v in vias}, key=lambda v: int(v[1]))[0]
             txt = re.sub(r'\(use_via "([^"]+)"\)', lambda m: m.group(0) if m.group(1) == small else f'(use_via "{m.group(1)}" "{small}")', txt)
-    if a.fanout:                                                      # read by FreeRouting from the structure: "Applied DSN autoroute settings to routing job"
-        txt = txt.replace("(structure\n", "(structure\n    (autoroute_settings (fanout on) (autoroute on) (postroute on) (vias on) (via_costs 50) (plane_via_costs 5) (start_ripup_costs 100) (start_pass_no 1))\n", 1)
+    if a.fanout or a.via_costs is not None or a.ripup_costs is not None:   # read by FreeRouting from the structure: "Applied DSN autoroute settings to routing job"
+        block = (f"(autoroute_settings (fanout {a.fanout or 'on'}) (autoroute on) (postroute on) (vias on) (via_costs {a.via_costs if a.via_costs is not None else 50}) "
+                 f"(plane_via_costs 5) (start_ripup_costs {a.ripup_costs if a.ripup_costs is not None else 100}) (start_pass_no 1))")
+        txt = txt.replace("(structure\n", "(structure\n    " + block + "\n", 1)
     open(dsn, "w", encoding="utf-8").write(txt)
     print(f"exported {os.path.basename(dsn)} with {fixed} fixed items, {dropped} corridors left out, {hardened} regions hardened, widths capped at {a.max_width} mm, planes on {' '.join(a.plane_layers)}; routing up to {a.passes} passes")
     try:
