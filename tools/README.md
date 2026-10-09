@@ -32,7 +32,7 @@ The directives module is the contract. Required:
 | `CONNECTORS` | `{ref: (x, y, rot)}`, locked |
 | `ANCHORS`, `FIXED` | `{ref: (x, y, rot)}` ICs placed by flow (validated), parts fixed by hand (not validated, for parts that straddle a barrier) |
 | `SPARE` | `(x, y)` where a part that fits nowhere is parked and reported |
-| `STACKUP` | layers for the board file, outer to outer: `("F.Cu", "copper", 0.035)` and `("dielectric 1", "prepreg", 0.3048, 4.6)`; its copper items set the board's copper layer count and the rule areas' layers |
+| `STACKUP` | layers for the board file, outer to outer: `("F.Cu", "copper", 0.035)` and `("dielectric 1", "prepreg", 0.3048, 4.6)`; its copper items set the board's copper layer count and the rule areas' layers; the layers `PLANES` names are typed power in the board file |
 
 Optional, with the standard's default in `placer.DEFAULTS` when absent:
 `EDGE_ZONE` (3.0), `HOLE_CLEAR_R`, `PACK_MARGIN` (0.15), `RING_GAP` (0.15),

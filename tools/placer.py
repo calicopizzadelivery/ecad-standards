@@ -1807,6 +1807,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
         raise SystemExit(f"net classes with no net: {', '.join(empty)}: a pattern that matches nothing (a sheet-local net's pattern starts with *)")
     board = pcbnew.BOARD()
     board.SetCopperLayerCount(copper_layers_count())                 # from the directives' STACKUP
+    for layer in sorted({p[2] for p in L.PLANES}):                    # a layer that carries a plane is a power layer in the board file too
+        board.SetLayerType(board.GetLayerID(layer), pcbnew.LT_POWER)
     ds = board.GetDesignSettings(); ds.m_MinThroughDrill = pcbnew.FromMM(0.2)     # the fab's minimum is 0.15; thermal vias in footprints are 0.2
     ds.m_CopperEdgeClearance = pcbnew.FromMM(0.25)                                   # the fab's copper-to-edge minimum
     # ---- outline with rounded corners
