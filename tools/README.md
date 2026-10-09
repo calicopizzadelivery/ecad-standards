@@ -133,8 +133,10 @@ via changed nothing, the router already did; the fanout stage is on by
 FreeRouting's default) and with the project's clearances as they are
 (`--clearance-margin 0`: a margin over them had turned every lane laid at
 the clearance into a violation in the router's eyes). A router track the
-gate faults is removed in a fresh process (`--post3`) and the gate runs
-again, the connection joining the hand pass. One thread on purpose: FreeRouting's multi-threaded
+A router track the gate faults, or a track or via it reports dangling, is
+removed in a fresh process (`--post3`) and the gate runs again (removing
+one can leave another dangling: the sweep repeats until the report is
+clean), the connection joining the hand pass. One thread on purpose: FreeRouting's multi-threaded
 optimiser produces clearance violations. Run it once after the placer; the
 board file is the source of truth from then on.
 
