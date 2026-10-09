@@ -598,9 +598,20 @@ assembler is consulted on double-sided reflow before the first order.
 - **Layers**: on a four-layer board the outer layers route and carry
   ground pours, the first inner layer is the unbroken ground plane, the
   second inner layer carries the power planes and the few tracks that must
-  cross the board. (Practice: the bottom carries 40 to 45 % of the track
-  length, the inner layers 3 to 12 %, and every multilayer reference board
-  has a ground plane on an inner layer, most on the one under the top.)
+  cross; on a six-layer board the outer layers route and carry the pours,
+  L2 and L5 are unbroken ground planes (each outer layer and its pairs
+  reference the one beside it), L3 routes and L4 carries the rails,
+  referenced to L5 across the core; the router routes on the signal layers
+  only and the plane layers are typed power for it (the generator passes
+  the layers of `PLANES`). Four layers ran out of room on the baseboard
+  (116 open connections after the router, 99 with its costs tuned, two
+  routing layers at 0.2 mm around two 6 A rails and a 3 A inlet); six is
+  the next construction the fab stocks (Advanced Circuits 0.062": 1 oz on
+  all six, two 2116 sheets between the outer and plane layers and between
+  L3 and L4, a 0.014" core between each plane and its neighbour). (The
+  reference boards put 3 to 12 % of their track length on inner layers,
+  and every multilayer one has a ground plane on an inner layer, most on
+  the one under the top.)
 - **Ground stitching**: the outer ground pours are tied to the plane with
   vias at about four per square centimetre, and a ground via sits beside
   every signal that changes layer. The generator places the grid (section

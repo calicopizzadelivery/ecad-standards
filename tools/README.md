@@ -32,13 +32,13 @@ The directives module is the contract. Required:
 | `CONNECTORS` | `{ref: (x, y, rot)}`, locked |
 | `ANCHORS`, `FIXED` | `{ref: (x, y, rot)}` ICs placed by flow (validated), parts fixed by hand (not validated, for parts that straddle a barrier) |
 | `SPARE` | `(x, y)` where a part that fits nowhere is parked and reported |
-| `STACKUP` | layers for the board file: `("F.Cu", "copper", 0.035)` and `("dielectric 1", "prepreg", 0.3048, 4.6)` |
+| `STACKUP` | layers for the board file, outer to outer: `("F.Cu", "copper", 0.035)` and `("dielectric 1", "prepreg", 0.3048, 4.6)`; its copper items set the board's copper layer count and the rule areas' layers |
 
 Optional, with the standard's default in `placer.DEFAULTS` when absent:
 `EDGE_ZONE` (3.0), `HOLE_CLEAR_R`, `PACK_MARGIN` (0.15), `RING_GAP` (0.15),
 `RINGS`, `RING_REACH`, `RING_SLIDES`, `SEARCH_RADIUS`, `BIG_AREA`,
 `SMALL_AREA`, `LANES` (corridors: `{name: {"net", "layer", "path": [pad,
-("x"|"y", value or pad), ...]}}`), `LANE_MARGIN`, `ISOLATION_REGIONS`
+("x"|"y", value or pad), ...]}}`), `LANE_MARGIN`, `ISOLATION_REGIONS` Its `islands` (or the single `island` of earlier directives) are the region's own plane islands, one per plane layer: `(name, net, layer, outline)`.
 (`{"name", "outline", "rects", "grown", "nets" regex, "classes", "gap",
 "island": (zone name, net, layer, outline)}`), `PLANES` (`(name, net, layer,
 outline)`, single outlines, notched rather than holed), `CURRENT_CLASSES`,

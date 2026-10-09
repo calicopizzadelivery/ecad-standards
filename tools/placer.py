@@ -755,8 +755,7 @@ class Placer:
         for plane in L.PLANES:
             polys[plane[1]].append(plane[3]); covers.append((plane[1], plane[2], plane[3], plane[4] if len(plane) > 4 else 0))
         for region in self.regions:
-            if region.get("island"):
-                isl = region["island"]
+            for isl in region_islands(region):
                 polys[isl[1]].append(isl[3]); covers.append((isl[1], isl[2], isl[3], isl[4] if len(isl) > 4 else 0))
         if not polys:
             return 0, 0, [], []
@@ -1664,6 +1663,21 @@ class Placer:
         return omitted, outlined, not_outlined, stepped_out
 
 
+def copper_layers():
+    """The copper layers of the directives' STACKUP, outer to outer: ("F.Cu", "In1.Cu", ..., "B.Cu")."""
+    return tuple(item[0] for item in L.STACKUP if item[1] == "copper")
+
+
+def copper_layers_count():
+    return len(copper_layers())
+
+
+def region_islands(region):
+    """An isolated region's own plane islands: `islands` (a list of (name, net, layer, outline[, priority])) or the single
+    `island` of the earlier directives; one per plane layer the region's own ground must cover."""
+    return list(region.get("islands", ())) + ([region["island"]] if region.get("island") else [])
+
+
 def rail_pieces(step=0.1, islands=()):
     """Per plane net and layer, the pieces its copper falls into once the higher-priority planes of other nets carve it
     (the directives' PLANES and the regions' islands, rasterised at `step` mm, and within a rasterised piece the planes
@@ -1792,7 +1806,7 @@ def main(directives=None, out=None, project=None, house_fp=None):
     if empty:
         raise SystemExit(f"net classes with no net: {', '.join(empty)}: a pattern that matches nothing (a sheet-local net's pattern starts with *)")
     board = pcbnew.BOARD()
-    board.SetCopperLayerCount(4)
+    board.SetCopperLayerCount(copper_layers_count())                 # from the directives' STACKUP
     ds = board.GetDesignSettings(); ds.m_MinThroughDrill = pcbnew.FromMM(0.2)     # the fab's minimum is 0.15; thermal vias in footprints are 0.2
     ds.m_CopperEdgeClearance = pcbnew.FromMM(0.25)                                   # the fab's copper-to-edge minimum
     # ---- outline with rounded corners
@@ -1832,7 +1846,7 @@ def main(directives=None, out=None, project=None, house_fp=None):
         board.Add(fp); fps[ref] = fp
     # ---- placement
     P = Placer(board, fps, nets, classes, pad_net, sch_positions(), class_geometry())
-    rails_gate(islands=[r["island"] for r in P.regions if r.get("island")])
+    rails_gate(islands=[i for r in P.regions for i in region_islands(r)])
     P.place_fixed()
     P.resolve_lanes()
     P.place_satellites()
@@ -1849,7 +1863,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
         v = pcbnew.PCB_VIA(board); v.SetPosition(MM(x, y)); v.SetWidth(pcbnew.FromMM(dia)); v.SetDrill(pcbnew.FromMM(drill))
         v.SetViaType(pcbnew.VIATYPE_THROUGH); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetNet(netinfo[net]); v.SetLocked(True); board.Add(v)
     # ---- keep-outs: the corners (strips around the holes' pads), the isolation region and the lanes
-    def rule_area(name, outline, layers=("F.Cu", "In1.Cu", "In2.Cu", "B.Cu"), footprints=True, tracks=True, vias=True, fills=True):
+    def rule_area(name, outline, layers=None, footprints=True, tracks=True, vias=True, fills=True):
+        layers = layers or copper_layers()                             # every copper layer of the stackup unless told otherwise
         zn = pcbnew.ZONE(board); zn.SetIsRuleArea(True)
         zn.SetDoNotAllowTracks(tracks); zn.SetDoNotAllowVias(vias); zn.SetDoNotAllowZoneFills(fills); zn.SetDoNotAllowFootprints(footprints)
         zn.SetDoNotAllowPads(False)
@@ -1899,8 +1914,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
         if len(plane) > 4:
             zn.SetAssignedPriority(plane[4])
     for region in L.ISOLATION_REGIONS:
-        if region.get("island"):
-            name, net, layer, outline = region["island"]; copper_zone(name, net, layer, outline)
+        for isl in region_islands(region):
+            copper_zone(*isl[:4])
     # ---- save, then the stackup (not reachable through the Python API) and the design rules
     path = os.path.join(OUT, f"{PROJECT}.kicad_pcb")
     pcbnew.SaveBoard(path, board, True)                # skip settings: the project file (net classes) is the schematic build's
