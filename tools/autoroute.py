@@ -222,7 +222,7 @@ def post3(board_path):
         head = block.splitlines()[0] if block else ""
         if not head.startswith("[") or head.startswith("[unconnected_items]"):
             continue
-        if "; error" not in block and not head.startswith("[track_dangling]"):   # a router stub with a loose end goes too, whatever its severity
+        if "; error" not in block and not head.startswith(("[track_dangling]", "[via_dangling]")):   # a router stub or via with a loose end goes too, whatever its severity
             continue
         for m in re.finditer(r"@\(([-\d.]+) mm, ([-\d.]+) mm\): (Track|Via) \[([^\]]*)\] on ([\w.]+(?: - [\w.]+)?)(?:, length ([\d.]+) mm)?", block):
             faulted.append((m.group(3), float(m.group(1)), float(m.group(2)), m.group(4), m.group(5), float(m.group(6)) if m.group(6) else None))
