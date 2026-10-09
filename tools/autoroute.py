@@ -135,16 +135,24 @@ def post(board_path):
             if t.GetClass() == "PCB_TRACK" and (pad.HitTest(t.GetStart()) or pad.HitTest(t.GetEnd())):
                 return True
         return False
-    off_lane = {}
+    off_lane = {}; pads = collections.defaultdict(list)
     for pad in b.GetPads():
         n = str(pad.GetNetname())
-        if n in pair_nets and not reached(pad):
-            off_lane.setdefault(n, []).append(f"{pad.GetParentFootprint().GetReference()}.{pad.GetNumber()}")
+        if n in pair_nets:
+            pads[n].append(pad)
+            if not reached(pad):
+                off_lane.setdefault(n, []).append(f"{pad.GetParentFootprint().GetReference()}.{pad.GetNumber()}")
     swept = pair_nets - set(off_lane)
     removed = 0
     for item in list(b.GetTracks()):
-        if not item.IsLocked() and str(item.GetNetname()) in swept:
+        if item.IsLocked():
+            continue
+        n = str(item.GetNetname())
+        if n in swept:
             b.Remove(item); removed += 1
+        elif n in off_lane and item.GetClass() == "PCB_TRACK":         # on a spared net the stub lying wholly inside one of its pads goes too
+            if any(p.HitTest(item.GetStart()) and p.HitTest(item.GetEnd()) for p in pads[n]):
+                b.Remove(item); removed += 1
     if removed:
         print(f"   {removed} router tracks and vias on pair nets removed (the lanes carry the pairs)")
     for n in sorted(off_lane):

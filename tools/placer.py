@@ -1035,7 +1035,15 @@ class Placer:
                 a2 = (a[0] + d0[0] * L.DIRECT_STUB, a[1] + d0[1] * L.DIRECT_STUB); b2 = (b[0] - d1[0] * L.DIRECT_STUB, b[1] - d1[1] * L.DIRECT_STUB)
                 self.tracks.append((net, layers[0], esc_w, a, a2)); self.tracks.append((net, layers[0], esc_w, a2, b2)); self.tracks.append((net, layers[0], esc_w, b2, b))
             self.bridge(name, bridges0, netP, netN, d0, layers[0]); self.bridge(name, bridges1, netP, netN, (-d1[0], -d1[1]), layers[-1])
-            self.lane_report.append(f"{name}: direct {total:.1f} mm" + (" CROSSING" if crossing else ""))
+            # a direct lane is too short for a bump: its members' lengths (pad to pad, the bridges aside) are reported with
+            # the mismatch all the same, as the standard's step 5 says
+            def member(side):
+                a = tips0[side]; b = tips1[side]
+                a2 = (a[0] + d0[0] * L.DIRECT_STUB, a[1] + d0[1] * L.DIRECT_STUB); b2 = (b[0] - d1[0] * L.DIRECT_STUB, b[1] - d1[1] * L.DIRECT_STUB)
+                return sum(math.hypot(q[0] - p[0], q[1] - p[1]) for p, q in ((a, a2), (a2, b2), (b2, b)))
+            lp, ln = member("P"), member("N")
+            self.lane_report.append(f"{name}: direct {total:.1f} mm, P {lp:.2f} mm, N {ln:.2f} mm, mismatch {abs(lp - ln):.2f} mm"
+                                    + (", no room for a bump" if abs(lp - ln) > L.MATCH_TOLERANCE else "") + (" CROSSING" if crossing else ""))
             if crossing:
                 self.lane_problems.append(f"lane {name}: the P and N pads are on opposite sides at its two ends; swap the array's channels in the schematic")
             return
@@ -1933,6 +1941,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
                '\t\t\t(layer "B.SilkS" (type "Bottom Silk Screen"))', '\t\t\t(copper_finish "ENIG")', '\t\t\t(dielectric_constraints no)']
     stack = "\t\t(stackup\n" + "\n".join(layers) + "\n\t\t)\n"
     assert "(stackup" not in t
+    total = sum(item[2] for item in L.STACKUP)                        # the board's thickness is the stackup's sum, not pcbnew's 1.6
+    t = re.sub(r"(\(general\n\t\t\(thickness )[\d.]+", lambda m: m.group(1) + f"{total:.3f}".rstrip("0").rstrip("."), t, count=1)
     t = re.sub(r"(\n\t\(setup\n)", r"\1" + stack.replace("\\", "\\\\"), t, count=1)
     t = canonical(t)
     open(path, "w", encoding="utf-8").write(t)
