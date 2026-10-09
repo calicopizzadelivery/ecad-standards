@@ -75,6 +75,7 @@ def main():
         raise SystemExit("SES import failed")
     pcbnew.SaveBoard(board_path, b, True)                           # save at once: the board object is not usable after the import
     # the rest in a fresh process: after ImportSpecctraSES even a reloaded board can come back as a bare SWIG pointer
+    os.environ["AUTOROUTE_MAX_WIDTH"] = str(a.max_width)              # the post steps measure the necks against the cap the router had
     subprocess.run([sys.executable, os.path.abspath(__file__), "--post", board_path], check=True)
 
 
@@ -132,7 +133,7 @@ def post2(board_path):
     # the router necks a wide class down to the pad's width at a pad entry and sometimes runs on at that width: every
     # unlocked segment on a class wider than the default that is narrower than the class (capped at the 2 mm the router
     # is given) and touches no pad of its net is listed for the hand pass
-    ds = b.GetDesignSettings(); cap = int(2.0e6)
+    ds = b.GetDesignSettings(); cap = int(float(os.environ.get("AUTOROUTE_MAX_WIDTH", "2.0")) * 1e6)
     pads = collections.defaultdict(list)
     for pad in b.GetPads():
         pads[str(pad.GetNetname())].append(pad)
