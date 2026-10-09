@@ -245,8 +245,11 @@ honoured exactly and the start is reproducible:
    listed for the hand pass,
    the board is written in canonical order and the gate runs. The class widths the router sees
    are capped at 2 mm (the 6 A class runs on the rails through its vias, not
-   as a track); the router runs with a via cost of 25 and a starting rip-up
-   cost of 200 (its own 50 and 100 left 116 connections open on the
+   as a track); the router's passes are single-threaded whatever thread
+   count it is given, so a machine with cores to spare runs a portfolio of
+   instances with different costs side by side and takes the one with the
+   fewest open connections; the router runs with a via cost of 25 and a
+   starting rip-up cost of 200 (its own 50 and 100 left 116 connections open on the
    baseboard where these leave 99; a 1 mm cap takes more off the wide nets
    and puts some back on the signals, so the cap stays) and with the
    project's clearances as they are (a margin over them turns every lane

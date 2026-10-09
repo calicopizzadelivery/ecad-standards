@@ -9,7 +9,7 @@ via and rip-up costs, the width cap and the clearance margin are options with me
 """
 import os, re, sys, subprocess, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import collections
+import collections, time
 import pcbnew
 
 
@@ -23,7 +23,8 @@ def main():
     ap.add_argument("--max-width", type=float, default=2.0, help="cap on the class track widths given to the router (mm): the rails carry the current through the rail vias; the 6 A class is capped")
     ap.add_argument("--clearance-margin", type=int, default=0, help="um added to every clearance the router sees (0, the project's figures as they are: a margin turns every lane laid at the clearance into a violation in the router's eyes, and the faulted-track sweep handles its rounding)")
     ap.add_argument("--small-vias", action="store_true", help="every class may also use the default (smallest) via: a class via that fits nowhere beside a pad fails the connection")
-    ap.add_argument("--fanout", choices=["on", "off"], default=None, help="FreeRouting's fanout stage (escape vias from SMD pads before routing; on by default in 2.4), through the design's autoroute_settings")
+    ap.add_argument("--fanout", choices=["on", "off"], default="on", help="FreeRouting's fanout stage (escape vias from SMD pads before routing), through its environment override; on: on six layers it escaped 7 of 10 SMD pins and halved what the first pass left")
+    ap.add_argument("--portfolio", type=int, default=1, help="FreeRouting instances run side by side on copies of the design with different via and rip-up costs, the one with the fewest unrouted connections taken (its passes are single-threaded whatever -mt says: the machine's cores go here)")
     ap.add_argument("--via-costs", type=int, default=25, help="FreeRouting's via cost (its own default is 50; 25 with the rip-up cost at 200 left 99 connections open on the baseboard against 116)")
     ap.add_argument("--ripup-costs", type=int, default=200, help="FreeRouting's starting rip-up cost (its own default is 100)")
     a = ap.parse_args()
@@ -56,20 +57,53 @@ def main():
         if vias:
             small = min({v for v in vias}, key=lambda v: int(v[1]))[0]
             txt = re.sub(r'\(use_via "([^"]+)"\)', lambda m: m.group(0) if m.group(1) == small else f'(use_via "{m.group(1)}" "{small}")', txt)
-    # the routing settings go in the design's structure, which FreeRouting reads ("Applied DSN autoroute settings to routing job")
-    block = (f"(autoroute_settings (fanout {a.fanout or 'on'}) (autoroute on) (postroute on) (vias on) (via_costs {a.via_costs}) "
-             f"(plane_via_costs 5) (start_ripup_costs {a.ripup_costs}) (start_pass_no 1))")
-    txt = txt.replace("(structure\n", "(structure\n    " + block + "\n", 1)
-    open(dsn, "w", encoding="utf-8").write(txt)
-    print(f"exported {os.path.basename(dsn)} with {fixed} fixed items, {dropped} corridors left out, {hardened} regions hardened, widths capped at {a.max_width} mm, planes on {' '.join(a.plane_layers)}; routing up to {a.passes} passes")
-    try:
-        r = subprocess.run([a.freerouting, "-de", dsn, "-do", ses, "-mp", str(a.passes), "-mt", str(a.threads)],
-                           capture_output=True, text=True, timeout=a.timeout)
-    except subprocess.TimeoutExpired:
-        raise SystemExit(f"FreeRouting did not finish within {a.timeout} s: raise --timeout or lower --passes (the session file is written only at the end)")
-    tail = [l for l in (r.stdout + r.stderr).splitlines() if "unrouted" in l.lower() or "completed" in l.lower()][-3:]
-    for l in tail:
-        print("   " + l[-160:])
+    # the routing settings go in the design's structure, which FreeRouting reads ("Applied DSN autoroute settings to routing job");
+    # the fanout stage is not among what it reads there: that goes through its environment override
+    def settings_block(via, ripup):
+        return (f"(autoroute_settings (fanout {a.fanout}) (autoroute on) (postroute on) (vias on) (via_costs {via}) "
+                f"(plane_via_costs 5) (start_ripup_costs {ripup}) (start_pass_no 1))")
+    # the portfolio: the given costs first, then a spread; every variant a FreeRouting instance of its own (its passes are
+    # single-threaded whatever -mt says: 16 threads gave the same board in the same CPU seconds), the fewest unrouted wins
+    spread = [(a.via_costs, a.ripup_costs), (20, 300), (30, 150), (15, 250), (40, 100), (25, 400), (10, 200), (35, 250), (50, 100), (20, 150), (30, 300), (15, 400)]
+    seen, variants = set(), []
+    for v in spread:
+        if v not in seen:
+            seen.add(v); variants.append(v)
+        if len(variants) == max(1, a.portfolio): break
+    env = dict(os.environ, FREEROUTING__ROUTER__FANOUT__ENABLED="true" if a.fanout == "on" else "false")
+    runs = []
+    for i, (via, ripup) in enumerate(variants):
+        vdsn, vses, vlog = (dsn, ses, work + ".freerouting.log") if len(variants) == 1 else (f"{work}.v{i}.dsn", f"{work}.v{i}.ses", f"{work}.v{i}.log")
+        open(vdsn, "w", encoding="utf-8").write(txt.replace("(structure\n", "(structure\n    " + settings_block(via, ripup) + "\n", 1))
+        out = open(vlog, "w", encoding="utf-8")
+        p = subprocess.Popen([a.freerouting, "-de", vdsn, "-do", vses, "-mp", str(a.passes), "-mt", str(a.threads)], stdout=out, stderr=subprocess.STDOUT, env=env)
+        runs.append((i, via, ripup, vdsn, vses, vlog, p, out))
+    print(f"exported {os.path.basename(dsn)} with {fixed} fixed items, {dropped} corridors left out, {hardened} regions hardened, widths capped at {a.max_width} mm, planes on {' '.join(a.plane_layers)}; "
+          f"routing up to {a.passes} passes" + (f" in a portfolio of {len(variants)}: " + ", ".join(f"via {v} rip-up {r}" for v, r in variants) if len(variants) > 1 else f" (via {variants[0][0]}, rip-up {variants[0][1]})"))
+    deadline = time.time() + a.timeout; results = []
+    for i, via, ripup, vdsn, vses, vlog, p, out in runs:
+        try:
+            p.wait(timeout=max(1, deadline - time.time()))
+        except subprocess.TimeoutExpired:
+            p.kill(); p.wait()
+        out.close()
+        text = open(vlog, encoding="utf-8", errors="replace").read()
+        m = re.findall(r"\((\d+) unrouted and (\d+) violations\)", text)
+        unrouted = int(m[-1][0]) if m and os.path.exists(vses) else None
+        results.append((unrouted, i, via, ripup, vses))
+        print(f"   variant {i} (via {via}, rip-up {ripup}): " + (f"{unrouted} unrouted" if unrouted is not None else "no session (ran out of time or failed)"))
+    done = [r for r in results if r[0] is not None]
+    if not done:
+        raise SystemExit(f"FreeRouting produced no session within {a.timeout} s: raise --timeout or lower --passes (the session file is written only at the end)")
+    best = min(done, key=lambda r: (r[0], r[1]))
+    if len(variants) > 1:
+        print(f"   taking variant {best[1]} (via {best[2]}, rip-up {best[3]}): {best[0]} unrouted")
+        os.replace(best[4], ses)
+        for _, i, _, _, vses in results:
+            for f in (f"{work}.v{i}.dsn", f"{work}.v{i}.ses", f"{work}.v{i}.log"):
+                if os.path.exists(f): os.remove(f)
+    elif os.path.exists(work + ".freerouting.log"):
+        os.remove(work + ".freerouting.log")
     if not os.path.exists(ses):
         raise SystemExit("FreeRouting produced no session file")
     if not pcbnew.ImportSpecctraSES(b, ses):

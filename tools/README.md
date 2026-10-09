@@ -113,7 +113,17 @@ segments on a wide class that run on at a pad's width more than a millimetre
 beyond the pad (the router's pad-entry necking: the hand pass widens them), writes the board in
 canonical order and runs the DRC gate. The class
 widths given to the router are capped at `--max-width` (2.0 mm): the 6 A
-class runs on the rails through the rail vias. FreeRouting runs with a via
+class runs on the rails through the rail vias. FreeRouting's routing passes
+are single-threaded whatever `--threads` says (16 threads gave the same
+board in the same CPU seconds; the count only feeds its optimiser, which
+it warns is broken and makes clearance violations, so one thread stays),
+and a machine with cores to spare uses them through `--portfolio N`: N
+instances on copies of the design with different via and rip-up costs
+(the given ones first, then a spread), run side by side, the one with the
+fewest unrouted connections taken. Its fanout stage stays on (`--fanout`,
+through FreeRouting's environment override: on six layers it escaped 7 of
+10 SMD pins with vias and halved what the first pass left; the design's
+`(fanout …)` keyword is not read). FreeRouting runs with a via
 cost of 25 and a starting rip-up cost of 200 (`--via-costs`,
 `--ripup-costs`; its own defaults, 50 and 100, left 116 connections open
 on the baseboard where these leave 99, measured on scratch copies of one
