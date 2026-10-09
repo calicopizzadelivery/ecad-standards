@@ -113,11 +113,18 @@ segments on a wide class that run on at a pad's width more than a millimetre
 beyond the pad (the router's pad-entry necking: the hand pass widens them), writes the board in
 canonical order and runs the DRC gate. The class
 widths given to the router are capped at `--max-width` (2.0 mm): the 6 A
-class runs on the rails through the rail vias. Every clearance in the
-export is 10 µm over the project's, so the router's rounding never comes
-out under DRC's figure; a router track the gate still faults is removed in
-a fresh process (`--post3`) and the gate runs again, the connection joining
-the hand pass. One thread on purpose: FreeRouting's multi-threaded
+class runs on the rails through the rail vias. FreeRouting runs with a via
+cost of 25 and a starting rip-up cost of 200 (`--via-costs`,
+`--ripup-costs`; its own defaults, 50 and 100, left 116 connections open
+on the baseboard where these leave 99, measured on scratch copies of one
+placement; a 1 mm cap took 17 more off the wide nets and put 10 back on
+the signals, so the cap stays at 2 mm; letting every class use the small
+via changed nothing, the router already did; the fanout stage is on by
+FreeRouting's default) and with the project's clearances as they are
+(`--clearance-margin 0`: a margin over them had turned every lane laid at
+the clearance into a violation in the router's eyes). A router track the
+gate faults is removed in a fresh process (`--post3`) and the gate runs
+again, the connection joining the hand pass. One thread on purpose: FreeRouting's multi-threaded
 optimiser produces clearance violations. Run it once after the placer; the
 board file is the source of truth from then on.
 

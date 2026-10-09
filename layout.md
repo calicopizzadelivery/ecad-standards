@@ -245,10 +245,14 @@ honoured exactly and the start is reproducible:
    listed for the hand pass,
    the board is written in canonical order and the gate runs. The class widths the router sees
    are capped at 2 mm (the 6 A class runs on the rails through its vias, not
-   as a track), and every clearance goes to the router 10 µm over the
-   project's, so its rounding never lands under DRC's figure; a router
-   track the gate still faults is removed and the gate runs again, the
-   connection joining the hand pass. What the autorouter leaves unrouted is
+   as a track); the router runs with a via cost of 25 and a starting rip-up
+   cost of 200 (its own 50 and 100 left 116 connections open on the
+   baseboard where these leave 99; a 1 mm cap takes more off the wide nets
+   and puts some back on the signals, so the cap stays) and with the
+   project's clearances as they are (a margin over them turns every lane
+   laid at the clearance into a violation in its eyes); a router track the
+   gate faults is removed and the gate runs again, the connection joining
+   the hand pass. What the autorouter leaves unrouted is
    finished by hand in KiCad, and from then on the board file is the source
    of truth.
 11. **The copper after routing** (`tools/copper.py`, run over the routed
