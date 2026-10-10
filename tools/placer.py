@@ -715,7 +715,8 @@ class Placer:
                 elif isinstance(item[0], str) and item[0] not in ("x", "y", "layer") and item[0] in self.fps:
                     ends.add(item[0])
         for name, box, sides in self.lanes:                         # nothing fixed but this lane's own ends may stand in it
-            ends = lane_ends.get(name) or lane_ends.get(name[:-5] if name.endswith("_bump") else name, set())
+            base = name[:-5] if name.endswith("_bump") else name[:-4] if name.endswith("_via") else name
+            ends = lane_ends.get(base, set())                       # a via box or a bump belongs to its lane
             for ref in self.fixed:                                  # on either side: a corridor keeps parts out of both
                 if ref not in L.HOLES and ref not in ends and self.side[ref] in sides and overlap(box, self.boxes[self.side[ref]][ref]):
                     note = f"lane {name} runs through the hand-fixed {ref}" if ref in L.FIXED else f"lane {name} runs through {ref}"
