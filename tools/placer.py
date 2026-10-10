@@ -704,7 +704,7 @@ class Placer:
                     self.lay_single(name, lane)
             except SystemExit as e:                                 # a lane the engine cannot lay is reported and left to the router
                 self.lane_problems.append(f"{name}: {e}"); print(f"LANE NOT LAID {name}: {e}")
-        through = []                                                # a corridor over a locked part that is not hand-fixed (a connector)
+        through, noted = [], set()                                  # a corridor over a locked part that is not hand-fixed (a connector)
         self.hand_notes = getattr(self, "hand_notes", [])
         lane_ends = {}                                              # each lane's own ends: the parts a corridor may touch
         for lname, lane in L.LANES.items():
@@ -714,15 +714,23 @@ class Placer:
                     ends.update(r for r, _ in item[1].values())
                 elif isinstance(item[0], str) and item[0] not in ("x", "y", "layer") and item[0] in self.fps:
                     ends.add(item[0])
-        for name, box, sides in self.lanes:                         # nothing fixed but this lane's own ends may stand in it
+        for name, box, sides in self.lanes:                         # a part on a leg's own side (either side at a via box), the lane's ends aside
             base = name[:-5] if name.endswith("_bump") else name[:-4] if name.endswith("_via") else name
             ends = lane_ends.get(base, set())                       # a via box or a bump belongs to its lane
-            for ref in self.fixed:                                  # on either side: a corridor keeps parts out of both
-                if ref not in L.HOLES and ref not in ends and self.side[ref] in sides and overlap(box, self.boxes[self.side[ref]][ref]):
-                    note = f"lane {name} runs through the hand-fixed {ref}" if ref in L.FIXED else f"lane {name} runs through {ref}"
-                    seen = self.hand_notes if ref in L.FIXED else through   # once per lane and part, however many legs cross it
-                    if note not in seen:                            # a hand-fixed part in a corridor is reported; the lane is laid and DRC judges
-                        seen.append(note); print(note)
+            for ref in self.fixed:
+                if ref in L.HOLES or ref in ends:
+                    continue
+                bx = self.boxes[self.side[ref]][ref]
+                if self.side[ref] in sides and overlap(box, bx):
+                    depth = min(min(box[2] - bx[0], bx[2] - box[0]), min(box[3] - bx[1], bx[3] - box[1]))
+                    note = f"lane {name} runs through the {'hand-fixed ' if ref in L.FIXED else ''}{ref} by {depth:.2f} mm"
+                elif sides == {"B"} and self.side[ref] == "F" and any(overlap(box, u) for u in self.under.get(ref, ())):
+                    note = f"lane {name} runs under the {'hand-fixed ' if ref in L.FIXED else ''}{ref} (a crystal or a through-hole row, section 4)"
+                else:
+                    continue
+                seen = self.hand_notes if ref in L.FIXED else through   # once per lane and part, however many legs cross it
+                if (name, ref) not in noted:                        # a hand-fixed part in a corridor is reported; the lane is laid and DRC judges
+                    noted.add((name, ref)); seen.append(note); print(note)
         crossing = [f"lane {n}: the P and N pads are on opposite sides at its two ends: swap the array's channels in the schematic, "
                     "or lead the path in from the other side" for n in self.lane_crossing]
         if (self.lane_problems or through or crossing) and not L.FIXED:   # with nothing hand-fixed the directives themselves are at fault
@@ -749,10 +757,12 @@ class Placer:
                 short, sign = (netN, -sP) if delta > 0 else (netP, sP)
                 cands = [(i, tr) for i, tr in mine if tr[0] == short and (abs(tr[3][0] - tr[4][0]) < 1e-6 or abs(tr[3][1] - tr[4][1]) < 1e-6)
                          and math.hypot(tr[4][0] - tr[3][0], tr[4][1] - tr[3][1]) > L.BUMP_WIDTH + 2.0]
-                others = [bx for nm, bx, _ in self.lanes if not nm.startswith(name)] + [bx for r, bx in self.boxes["F"].items() if r in self.fixed]
+                others_on = {s: [bx for nm, bx, sd in self.lanes if not nm.startswith(name) and (s in sd or not sd)]
+                             + [bx for r, bx in self.boxes[s].items() if r in self.fixed] for s in ("F", "B")}   # per side: lanes there and fixed parts
                 placed = False
                 for i, (net, lay, ww, a, b) in sorted(cands, key=lambda it: -math.hypot(it[1][4][0] - it[1][3][0], it[1][4][1] - it[1][3][1])):
                     d = unit(a, b); n = nplus(d); h = min(abs(delta) / 2, L.BUMP_HEIGHT); s = L.BUMP_WIDTH
+                    others = others_on.get(next(iter(sides_of(lay)), "F"), []) if sides_of(lay) else []
                     mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
                     p1 = (mid[0] - d[0] * s / 2, mid[1] - d[1] * s / 2); p2 = (mid[0] + d[0] * s / 2, mid[1] + d[1] * s / 2)
                     q1 = (p1[0] + n[0] * h * sign, p1[1] + n[1] * h * sign); q2 = (p2[0] + n[0] * h * sign, p2[1] + n[1] * h * sign)
@@ -760,7 +770,7 @@ class Placer:
                     if any(overlap(bb, o, 0.2) for o in others) or bb[0] < L.EDGE_ZONE or bb[1] < L.EDGE_ZONE or bb[2] > W - L.EDGE_ZONE or bb[3] > H - L.EDGE_ZONE:
                         continue
                     self.tracks[i:i + 1] = [(net, lay, ww, a, p1), (net, lay, ww, p1, q1), (net, lay, ww, q1, q2), (net, lay, ww, q2, p2), (net, lay, ww, p2, b)]
-                    self.lanes.append((name + "_bump", bb, {lay[0]})); placed = True
+                    self.lanes.append((name + "_bump", bb, sides_of(lay))); placed = True
                     for j, (nm, nP, nN, sg, a0, a1) in enumerate(self.pairs_laid):   # the indices after the bump shift by four
                         if a0 > i: self.pairs_laid[j] = (nm, nP, nN, sg, a0 + 4, a1 + 4)
                         elif a1 > i: self.pairs_laid[j] = (nm, nP, nN, sg, a0, a1 + 4)
@@ -928,6 +938,9 @@ class Placer:
             else:
                 if p[1] >= (cb[1] + cb[3]) / 2: box[1] = cb[3]
                 else: box[3] = cb[1]
+        own = dia / 2 + clear                                          # the via's own extent must stay inside: a via within an end
+        if box[0] > p[0] - own or box[2] < p[0] + own or box[1] > p[1] - own or box[3] < p[1] + own:   # part's courtyard keeps no box
+            return
         if box[2] - box[0] > 0.1 and box[3] - box[1] > 0.1:
             self.lanes.append((name + "_via", tuple(box), {"F", "B"}))
 
@@ -959,6 +972,8 @@ class Placer:
                 raise SystemExit(f"lane {name}: pad {item} is not on {net}")
             return self.pad_geom(*item)[0]
         pts, layers, switches = self.walk(lane, end_pt)
+        if any(k <= 0 or k >= len(pts) - 1 for k, _, _ in switches):
+            raise SystemExit(f"lane {name}: a layer change needs a leg on each side of it")
         ends = [item[0] for item in lane["path"] if item[0] not in ("x", "y", "layer")]
         layer = lane.get("layer", "F.Cu")
         for i, ((x0, y0), (x1, y1)) in enumerate(zip(pts, pts[1:])):
@@ -1043,6 +1058,8 @@ class Placer:
         pts, layers, switches = self.walk(lane, end_mid)
         if len(pts) < 2:
             raise SystemExit(f"lane {name}: needs at least one leg")
+        if any(k <= 0 or k >= len(pts) - 1 for k, _, _ in switches):
+            raise SystemExit(f"lane {name}: a layer change needs a leg on each side of it")
         d0 = unit(pts[0], pts[1]); d1 = unit(pts[-2], pts[-1])
         # members at each end, and the P side at the start
         spec0 = pads_of_end(end_items[0]); spec1 = pads_of_end(end_items[1])

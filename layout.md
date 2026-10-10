@@ -155,8 +155,13 @@ honoured exactly and the start is reproducible:
    side does not break the leg's reference plane (L2 under a top leg, L5
    under a bottom one), and section 3.7's tuck puts small parts under pin
    rows on the bottom, where a lane leaves those pins on top. Around each
-   lane via, and each pair's via pair, a box the via's clearance and the
-   margin wide keeps parts off both sides. A lane whose pad is not on its net is
+   lane via, and each pair's via pair, a box reaching the via's clearance
+   and the margin beyond the via (beyond both vias of a pair) keeps parts
+   off both sides, cut back at the courtyards of the parts the lane joins
+   as the legs are (a via inside such a courtyard keeps no box); a
+   length-matching bump keeps its own side; a leg on an inner layer keeps
+   no parts off. A bottom leg under a crystal or a through-hole row on top
+   is reported all the same (section 4: nothing routed under a crystal). A lane whose pad is not on its net is
    refused, and so is one that runs through a fixed part, unless parts are
    hand-fixed (item 4), when it is laid and reported. **A pair lane** lays the two
    member tracks at the class's differential width and gap along one
@@ -492,8 +497,9 @@ its capacitors on the bottom and the other's on top, the bottom one beside
 the connector where the top one sits over it, so the area in front of the
 connector holds one channel per side instead of two side by side. The
 channel's indicator LED and its series resistor stay on top, and so does
-its ESD. The corner keep-outs, the edge zone, the lanes and the isolation
-rule apply on both sides. The point of the bottom is the top: the area it
+its ESD. The corner keep-outs, the edge zone and the isolation rule apply
+on both sides; a lane keeps parts off its leg's own side and both sides
+around its vias (section 2, item 5). The point of the bottom is the top: the area it
 frees is for the blocks' copper zones (section 4), not for more parts. The
 assembler is consulted on double-sided reflow before the first order.
 
