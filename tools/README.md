@@ -175,17 +175,28 @@ the hand pass.
 The first form harvests a board the owner has moved parts on in KiCad:
 every footprint's pose (x, y, rotation, side) is written to
 `DIRECTIVES_DIR/hand_placement.py` as `HAND = {ref: (x, y, rot, side)}`,
-which the directives merge over `FIXED` (`from hand_placement import HAND;
-FIXED = {**FIXED, **HAND}`), and an edge connector that moved has its
-`CONNECTORS` tuple rewritten in `layout.py` (the lanes and the edge rules
-read that table); the mounting holes are skipped. It prints what moved,
-appeared or went since the previous harvest, for the commit message. The
-second form, after regenerating, lists every part the generated board
-places elsewhere than the hand-placed one and exits 1 if there is any: the
+which the directives merge over `FIXED` behind an import guard, so the
+first harvest of a project works:
+
+    try:
+        from hand_placement import HAND
+    except ImportError:
+        HAND = {}
+    FIXED = {**FIXED, **HAND}
+
+An edge connector that moved has its tuple rewritten inside the
+`CONNECTORS` table of `layout.py` (the lanes and the edge rules read that
+table; a connector on the bottom is refused); the mounting holes are
+skipped. Poses are written exactly as the file holds them (nanometres).
+It prints what moved, appeared or went since the previous harvest, for the
+commit message. The second form, after regenerating, lists every part the
+generated board places elsewhere than the hand-placed one, is missing, or
+has that the hand-placed board lacks, and exits 1 if there is any: the
 generator must reproduce the hand placement exactly. The hand placement
 is the whole board's placement from then on (every part is fixed, so an
 engine change cannot move one silently); a part added in the schematic is
-placed by the engine until the next harvest.
+placed by the engine until the next harvest. The harvest takes the parts'
+poses only: designators follow the silkscreen rule on every regeneration.
 
 ## harvest.py: measured practice (layout.md section 9)
 

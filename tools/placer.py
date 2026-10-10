@@ -635,18 +635,18 @@ class Placer:
         for i, a in enumerate(refs):
             for b in refs[i + 1:]:
                 if self.side[a] == self.side[b] and overlap(self.boxes[self.side[a]][a], self.boxes[self.side[b]][b], L.PACK_MARGIN):
-                    (hand if (a in L.FIXED or b in L.FIXED) else problems).append(f"{a} and {b}")
+                    (hand if (a in L.FIXED or b in L.FIXED) else problems).append(f"{a} and {b}" if (a in L.FIXED or b in L.FIXED) else f"{a} and {b} overlap")
         for ref in L.ANCHORS:
             if ref not in self.fps:
                 problems.append(f"{ref} is anchored but not in the schematic"); continue
             if ref in L.FIXED:
                 continue
-            if not self.allowed(ref, self.boxes["F"][ref]):
-                b = self.boxes["F"][ref]; why = self.why_not(ref, b, 'F')
+            if not self.allowed(ref, self.boxes[self.side[ref]][ref]):
+                b = self.boxes[self.side[ref]][ref]; why = self.why_not(ref, b, self.side[ref])
                 (hand if any(w in L.FIXED for w in re.split(r"[ ,]+", why)) else problems).append(f"{ref} at ({b[0]:.1f}-{b[2]:.1f}, {b[1]:.1f}-{b[3]:.1f}) is refused by: {why}")
         self.hand_notes = getattr(self, "hand_notes", [])            # what the hand-fixed parts put in each other's way: placement.txt
         if hand:
-            self.hand_notes.append(f"hand-fixed parts closer than the packing margin to a neighbour ({len(hand)}; the DRC gate judges the courtyards): " + ", ".join(hand))
+            self.hand_notes.append(f"hand-fixed pairs closer than the packing margin ({len(hand)}; the DRC gate judges the courtyards): " + ", ".join(hand))
             print(self.hand_notes[-1])
         for ref, b in self.boxes["F"].items():
             if ref not in L.HOLES and ref not in L.FIXED and any(overlap(b, c) for c in self.corners):
@@ -701,14 +701,16 @@ class Placer:
                 self.lane_problems.append(f"{name}: {e}"); print(f"LANE NOT LAID {name}: {e}")
         through = []                                                # a corridor over a locked part that is not hand-fixed (a connector)
         self.hand_notes = getattr(self, "hand_notes", [])
-        for name, box in self.lanes:                                # nothing fixed but the lane's ends may stand in it
-            ends = set()
-            for lane in L.LANES.values():
-                for item in lane["path"]:
-                    if item[0] == "pads":
-                        ends.update(r for r, _ in item[1].values())
-                    elif isinstance(item[0], str) and item[0] not in ("x", "y", "layer") and item[0] in self.fps:
-                        ends.add(item[0])
+        lane_ends = {}                                              # each lane's own ends: the parts a corridor may touch
+        for lname, lane in L.LANES.items():
+            ends = lane_ends[lname] = set()
+            for item in lane["path"]:
+                if item[0] == "pads":
+                    ends.update(r for r, _ in item[1].values())
+                elif isinstance(item[0], str) and item[0] not in ("x", "y", "layer") and item[0] in self.fps:
+                    ends.add(item[0])
+        for name, box in self.lanes:                                # nothing fixed but this lane's own ends may stand in it
+            ends = lane_ends.get(name) or lane_ends.get(name[:-5] if name.endswith("_bump") else name, set())
             for ref in self.fixed:                                  # on either side: a corridor keeps parts out of both
                 if ref not in L.HOLES and ref not in ends and overlap(box, self.boxes[self.side[ref]][ref]):
                     note = f"lane {name} runs through the hand-fixed {ref}" if ref in L.FIXED else f"lane {name} runs through {ref}"
@@ -1999,7 +2001,8 @@ def main(directives=None, out=None, project=None, house_fp=None):
           f"{sides['F']} parts on top, {sides['B']} on the bottom")
     # the anchored parts with their values beside their positions: an anchor written under the wrong designator (the
     # eFuse's position given to a level shifter) shows here, since DRC and the cities cannot see it
-    print("anchors: " + ", ".join(f"{ref} {fps[ref].GetValue()} at ({x:g}, {y:g})" for ref, (x, y, *_) in sorted(L.ANCHORS.items()) if ref in fps))
+    print("anchors: " + ", ".join(f"{ref} {fps[ref].GetValue()} at ({fps[ref].GetPosition().x / 1e6:g}, {fps[ref].GetPosition().y / 1e6:g})"   # where the part is: a hand-fixed
+                                  + (" hand-fixed" if ref in L.FIXED else "") for ref in sorted(L.ANCHORS) if ref in fps))       # part outranks its anchor
     esd = []
     for ref, host, layer, how in P.order:
         if P.is_esd(ref):

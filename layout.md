@@ -137,18 +137,23 @@ honoured exactly and the start is reproducible:
    reproduces the board from then on (`--check` compares its output with
    the hand-placed board and must find nothing placed elsewhere). A
    hand-fixed part outranks its anchor and the engine's own rule, and it is
-   reported rather than refused: the parts closer than the packing margin
-   to a neighbour (the DRC gate judges their courtyards), the lanes that
-   run through a hand-fixed part, and the lanes the engine could not lay
-   (left to the router) are listed in `placement.txt`, and that list is the
-   next hand pass's work. The edge connectors keep their own table
-   (`CONNECTORS`, item 3), rewritten by the harvest when one moves.
+   reported rather than refused: the pairs of parts closer than the packing
+   margin (the DRC gate judges their courtyards), the lanes that run
+   through a hand-fixed part or a locked one, the lanes the engine could
+   not lay (left to the router) and the pair lanes laid with their members
+   crossing (a moved part faces the path the wrong way) are listed in
+   `placement.txt` under "hand placement", and that list is the next hand
+   pass's work. The edge connectors keep their own table (`CONNECTORS`,
+   item 3), rewritten by the harvest when one moves, and stay on top. The
+   harvest takes the parts' poses only: the designators follow the
+   silkscreen rule (section 6) on every regeneration.
 5. **Lanes are laid next**, from the pads they join through the legs the
    directives give, as wide as the class's track plus its clearance plus a
    margin each side. Each becomes a footprint keep-out rule area on both
    sides, stopping at the courtyards of the parts the lane joins, and the
-   lane's copper at the class width. A lane whose pad is not on its net or
-   that runs through a fixed part is refused. **A pair lane** lays the two
+   lane's copper at the class width. A lane whose pad is not on its net is
+   refused, and so is one that runs through a fixed part, unless parts are
+   hand-fixed (item 4), when it is laid and reported. **A pair lane** lays the two
    member tracks at the class's differential width and gap along one
    centreline, 45-degree corners, escapes from the pads at the pads' own
    pitch (through-hole rows get a straight stub past the row first), the
@@ -269,9 +274,9 @@ honoured exactly and the start is reproducible:
    gate faults is removed and the gate runs again, the connection joining
    the hand pass. What the autorouter leaves unrouted is
    finished by hand in KiCad; the placement of that board goes back to the
-   directives through the harvest (item 4), so the generator still
-   reproduces it, and the routing finished by hand lives in the board file
-   from then on.
+   directives through the harvest (item 4), so a regeneration reproduces
+   it, while the routing finished by hand lives in the board file only: a
+   regeneration after that point starts the routing over.
 11. **The copper after routing** (`tools/copper.py`, run over the routed
    board, and again whenever the routing changes: it adds only what is
    missing). The ground floods of section 4 are drawn on both outer layers
