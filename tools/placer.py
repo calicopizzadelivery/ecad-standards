@@ -690,7 +690,7 @@ class Placer:
         """The lanes from the directives: corridors kept free of parts (stopping at the parts a lane joins), the
         tracks laid at the class width, a single-net lane's layer changes, and the differential pairs' two
         member tracks with their escapes, bridges, corners and the crossing check."""
-        self.lane_problems = []
+        self.lane_problems, self.lane_crossing = [], []            # not laid; laid with the members crossing
         for name, lane in L.LANES.items():
             try:
                 if "pair" in lane:
@@ -715,8 +715,12 @@ class Placer:
                         self.hand_notes.append(f"lane {name} runs through the hand-fixed {ref}"); print(self.hand_notes[-1])
                     else:
                         through.append(f"lane {name} runs through {ref}"); print(through[-1])
-        if (self.lane_problems or through) and not L.FIXED:         # with nothing hand-fixed the directives themselves are at fault
-            raise SystemExit("the directives' lanes are not consistent:\n  " + "\n  ".join(self.lane_problems + through))
+        crossing = [f"lane {n}: the P and N pads are on opposite sides at its two ends: swap the array's channels in the schematic, "
+                    "or lead the path in from the other side" for n in self.lane_crossing]
+        if (self.lane_problems or through or crossing) and not L.FIXED:   # with nothing hand-fixed the directives themselves are at fault
+            raise SystemExit("the directives' lanes are not consistent:\n  " + "\n  ".join(self.lane_problems + through + crossing))
+        if crossing:
+            self.hand_notes.append(f"lanes laid with their members crossing ({len(crossing)}; the DRC gate faults the crossing): " + "; ".join(crossing)); print(self.hand_notes[-1])
         if self.lane_problems:
             self.hand_notes.append(f"lanes not laid ({len(self.lane_problems)}; the router routes those pairs, and the pair sweep spares them): "
                                    + "; ".join(self.lane_problems)); print(self.hand_notes[-1])
@@ -1065,7 +1069,7 @@ class Placer:
             self.lane_report.append(f"{name}: direct {total:.1f} mm, P {lp:.2f} mm, N {ln:.2f} mm, mismatch {abs(lp - ln):.2f} mm"
                                     + (", no room for a bump" if abs(lp - ln) > L.MATCH_TOLERANCE else "") + (" CROSSING" if crossing else ""))
             if crossing:
-                self.lane_problems.append(f"lane {name}: the P and N pads are on opposite sides at its two ends; swap the array's channels in the schematic")
+                self.lane_crossing.append(name)
             return
         change_at = {k: new for k, old, new in switches}             # body index -> new layer (body[i] is pts[i] for inner points)
         VIA = L.VIA_PAIR_OFFSET
@@ -1123,7 +1127,7 @@ class Placer:
             self.add_corridor(name, a, b, hw, ends)
         self.lane_meta = getattr(self, "lane_meta", {}); self.lane_meta[name] = (len(switches), crossing)
         if crossing:
-            self.lane_problems.append(f"lane {name}: the P and N pads are on opposite sides at its two ends; swap the array's channels in the schematic")
+            self.lane_crossing.append(name)
 
     def choose_members(self, spec, d, mid, want_sign, netP, netN):
         """The member pad per net at an end (the single pad, or for doubled pads the adjacent pair whose P side
