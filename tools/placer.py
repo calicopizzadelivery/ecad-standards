@@ -910,12 +910,26 @@ class Placer:
         box = (min(a[0], b[0]) - hw, min(a[1], b[1]) - hw, max(a[0], b[0]) + hw, max(a[1], b[1]) + hw)
         self.lanes.append((name, box, sides_of(layer)))
 
-    def via_box(self, name, p, net, spread=0.0):
-        """The keep-out around a lane's via (or via pair spread across the lane): both sides, the via's own clearance and the margin."""
+    def via_box(self, name, p, net, spread=0.0, ends=()):
+        """The keep-out around a lane's via (or via pair spread across the lane): both sides, the via's own clearance and the
+        margin, cut back where it reaches the courtyard of a part the lane joins."""
         track, clear = self.class_of(net)
         dia = self.via_geometry.get(self.classes.get(net, "Default"), self.via_geometry.get("Default", (0.6, 0.3)))[0]
         r = spread + dia / 2 + clear + L.LANE_MARGIN
-        self.lanes.append((name + "_via", (p[0] - r, p[1] - r, p[0] + r, p[1] + r), {"F", "B"}))
+        box = [p[0] - r, p[1] - r, p[0] + r, p[1] + r]
+        for ref in ends:
+            cb = self.box_of(ref)
+            if not cb or not overlap(tuple(box), cb):
+                continue
+            ox = min(box[2], cb[2]) - max(box[0], cb[0]); oy = min(box[3], cb[3]) - max(box[1], cb[1])
+            if ox < oy:                                                # cut on the axis that loses least
+                if p[0] >= (cb[0] + cb[2]) / 2: box[0] = cb[2]
+                else: box[2] = cb[0]
+            else:
+                if p[1] >= (cb[1] + cb[3]) / 2: box[1] = cb[3]
+                else: box[3] = cb[1]
+        if box[2] - box[0] > 0.1 and box[3] - box[1] > 0.1:
+            self.lanes.append((name + "_via", tuple(box), {"F", "B"}))
 
     def walk(self, lane, ends_pads):
         """The centreline of a lane from its path items: points, the layer of each leg, and the end directions.
@@ -950,7 +964,7 @@ class Placer:
         for i, ((x0, y0), (x1, y1)) in enumerate(zip(pts, pts[1:])):
             for k, old, new in switches:
                 if k == i:
-                    layer = new; self.add_via(net, (x0, y0)); self.via_box(name, (x0, y0), net)
+                    layer = new; self.add_via(net, (x0, y0)); self.via_box(name, (x0, y0), net, 0.0, ends)
             self.tracks.append((net, layer, width, (x0, y0), (x1, y1)))
             self.add_corridor(name, (x0, y0), (x1, y1), hw, ends, layer)
         self.lane_report.append(f"{name}: {net.split('/')[-1]} {sum(math.hypot(b[0]-a[0], b[1]-a[1]) for a, b in zip(pts, pts[1:])):.1f} mm, {len(switches)} layer change(s)")
@@ -1127,9 +1141,10 @@ class Placer:
                 first = offp[0] if first is None else first; last = offp[-1]
             return first, last
         fP, lP = emit_member(sP, netP); fN, lN = emit_member(-sP, netN)
+        ends = [r for spec in (spec0, spec1) for side in ("P", "N") for r, _ in spec[side]]
         for vp in via_pts:                                             # the via pair at each layer change, kept clear on both sides
             self.add_via(netP, vp[sP]); self.add_via(netN, vp[-sP])
-            self.via_box(name, ((vp[1][0] + vp[-1][0]) / 2, (vp[1][1] + vp[-1][1]) / 2), netP, VIA)
+            self.via_box(name, ((vp[1][0] + vp[-1][0]) / 2, (vp[1][1] + vp[-1][1]) / 2), netP, VIA, ends)
         offP = [fP, lP]; offN = [fN, lN]
         # escapes: pad tip to the first/last member points
         for side, net, offp in (("P", netP, offP), ("N", netN, offN)):
@@ -1139,7 +1154,6 @@ class Placer:
         self.pairs_laid.append((name, netP, netN, sP, laid_from, len(self.tracks)))   # the bridges below are not signal path
         self.bridge(name, bridges0, netP, netN, d0, layers[0]); self.bridge(name, bridges1, netP, netN, (-d1[0], -d1[1]), layers[-1])
         # corridors along the centreline legs
-        ends = [r for spec in (spec0, spec1) for side in ("P", "N") for r, _ in spec[side]]
         for i, (a, b) in enumerate(zip(pts, pts[1:])):
             self.add_corridor(name, a, b, hw, ends, layers[i + 1])    # leg i runs on the layer in force after its first point
         self.lane_meta = getattr(self, "lane_meta", {}); self.lane_meta[name] = (len(switches), crossing)
