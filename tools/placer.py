@@ -695,8 +695,8 @@ class Placer:
                     self.lay_pair(name, lane)
                 else:
                     self.lay_single(name, lane)
-            except SystemExit as e:
-                self.lane_problems.append(str(e))
+            except SystemExit as e:                                 # a lane the engine cannot lay is reported and left to the router
+                self.lane_problems.append(str(e)); print(f"LANE NOT LAID {name}: {e}")
         for name, box in self.lanes:                                # nothing fixed but the lane's ends may stand in it
             ends = set()
             for lane in L.LANES.values():
@@ -711,8 +711,10 @@ class Placer:
                         print(f"lane {name} runs through the hand-fixed {ref}")
                     else:
                         self.lane_problems.append(f"lane {name} runs through {ref}")
-        if self.lane_problems:
+        if self.lane_problems and not L.FIXED:                      # with nothing hand-fixed the directives themselves are at fault
             raise SystemExit("the directives' lanes are not consistent:\n  " + "\n  ".join(self.lane_problems))
+        elif self.lane_problems:
+            print(f"lanes not laid ({len(self.lane_problems)}): the router routes those pairs, and the pair sweep spares them")
         self.match_lengths()
 
     def match_lengths(self):
