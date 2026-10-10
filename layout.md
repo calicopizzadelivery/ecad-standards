@@ -130,7 +130,19 @@ honoured exactly and the start is reproducible:
    the generator refuses an anchor table whose parts overlap, stand in a
    keep-out or on the wrong side of the barrier. The anchors are the knobs
    of the placement: when a block comes out cramped, its anchor moves, not
-   its parts.
+   its parts. **A hand placement is harvested, not kept in the board
+   file**: once the owner moves parts in KiCad, `tools/handplace.py` reads
+   every part's pose (x, y, rotation, side) off the saved board into the
+   directives' `hand_placement.py`, merged over `FIXED`, and the generator
+   reproduces the board from then on (`--check` compares its output with
+   the hand-placed board and must find nothing placed elsewhere). A
+   hand-fixed part outranks its anchor and the engine's own rule, and it is
+   reported rather than refused: the parts closer than the packing margin
+   to a neighbour (the DRC gate judges their courtyards), the lanes that
+   run through a hand-fixed part, and the lanes the engine could not lay
+   (left to the router) are listed in `placement.txt`, and that list is the
+   next hand pass's work. The edge connectors keep their own table
+   (`CONNECTORS`, item 3), rewritten by the harvest when one moves.
 5. **Lanes are laid next**, from the pads they join through the legs the
    directives give, as wide as the class's track plus its clearance plus a
    margin each side. Each becomes a footprint keep-out rule area on both
@@ -256,8 +268,10 @@ honoured exactly and the start is reproducible:
    laid at the clearance into a violation in its eyes); a router track the
    gate faults is removed and the gate runs again, the connection joining
    the hand pass. What the autorouter leaves unrouted is
-   finished by hand in KiCad, and from then on the board file is the source
-   of truth.
+   finished by hand in KiCad; the placement of that board goes back to the
+   directives through the harvest (item 4), so the generator still
+   reproduces it, and the routing finished by hand lives in the board file
+   from then on.
 11. **The copper after routing** (`tools/copper.py`, run over the routed
    board, and again whenever the routing changes: it adds only what is
    missing). The ground floods of section 4 are drawn on both outer layers
@@ -695,7 +709,11 @@ directives before the next starts.
    nothing routed under them. The autorouter does this pass over the locked
    lanes and the planes (section 2, step 10) and the copper tool adds the
    ground floods and stitching (step 11); the hand pass finishes what they
-   leave.
+   leave. Placement by hand is a loop, not a departure: move the parts in
+   KiCad, harvest the board into the directives (section 2, item 4),
+   regenerate, and read `placement.txt` for the parts and lanes the move
+   put in each other's way, until the lanes lay and the DRC gate is clean;
+   only then is the board routed.
 6. **Silkscreen and fabrication**: section 6, then the stackup and
    controlled-impedance notes in the fab drawing.
 

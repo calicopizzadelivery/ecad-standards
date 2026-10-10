@@ -30,7 +30,7 @@ The directives module is the contract. Required:
 | `BOARD`, `RADIUS` | outline size (mm) and corner radius |
 | `HOLES`, `HOLE_KEEPOUT` | mounting holes `{ref: (x, y)}` and the corner square kept empty around each |
 | `CONNECTORS` | `{ref: (x, y, rot)}`, locked |
-| `ANCHORS`, `FIXED` | `{ref: (x, y, rot[, side])}` parts fixed by hand (not validated: parts that straddle a barrier, or a hand placement harvested from the saved board); a fixed part outranks its anchor and may sit on the bottom (`"B"`) |
+| `ANCHORS`, `FIXED` | `{ref: (x, y, rot[, side])}` parts fixed by hand (not validated: parts that straddle a barrier, or the owner's placement harvested from the saved board by `handplace.py` into `hand_placement.py` and merged over `FIXED`); a fixed part outranks its anchor and may sit on the bottom (`"B"`); a hand-fixed part too close to a neighbour, in a lane's way, or stopping a lane is reported in `placement.txt`, not refused |
 | `SPARE` | `(x, y)` where a part that fits nowhere is parked and reported |
 | `STACKUP` | layers for the board file, outer to outer: `("F.Cu", "copper", 0.035)` and `("dielectric 1", "prepreg", 0.3048, 4.6)`; its copper items set the board's copper layer count, the board's thickness and the rule areas' layers; the layers `PLANES` names are typed power in the board file |
 
@@ -166,6 +166,26 @@ so the file is the same from any starting state and the pours are in the
 file as it is opened and rendered) and runs the DRC gate. It is the last
 generated step before
 the hand pass.
+
+## handplace.py: the owner's placement (layout.md section 2, item 4)
+
+    tools/handplace.py BOARD.kicad_pcb --gen DIRECTIVES_DIR
+    tools/handplace.py BOARD.kicad_pcb --check OUT_DIR/PROJECT.kicad_pcb
+
+The first form harvests a board the owner has moved parts on in KiCad:
+every footprint's pose (x, y, rotation, side) is written to
+`DIRECTIVES_DIR/hand_placement.py` as `HAND = {ref: (x, y, rot, side)}`,
+which the directives merge over `FIXED` (`from hand_placement import HAND;
+FIXED = {**FIXED, **HAND}`), and an edge connector that moved has its
+`CONNECTORS` tuple rewritten in `layout.py` (the lanes and the edge rules
+read that table); the mounting holes are skipped. It prints what moved,
+appeared or went since the previous harvest, for the commit message. The
+second form, after regenerating, lists every part the generated board
+places elsewhere than the hand-placed one and exits 1 if there is any: the
+generator must reproduce the hand placement exactly. The hand placement
+is the whole board's placement from then on (every part is fixed, so an
+engine change cannot move one silently); a part added in the schematic is
+placed by the engine until the next harvest.
 
 ## harvest.py: measured practice (layout.md section 9)
 
