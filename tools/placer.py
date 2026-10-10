@@ -705,9 +705,12 @@ class Placer:
                         ends.update(r for r, _ in item[1].values())
                     elif isinstance(item[0], str) and item[0] not in ("x", "y", "layer") and item[0] in self.fps:
                         ends.add(item[0])
-            for ref in self.fixed:
-                if ref not in L.HOLES and ref not in ends and overlap(box, self.boxes["F"][ref]):
-                    self.lane_problems.append(f"lane {name} runs through {ref}")
+            for ref in self.fixed:                                  # on either side: a corridor keeps parts out of both
+                if ref not in L.HOLES and ref not in ends and overlap(box, self.boxes[self.side[ref]][ref]):
+                    if ref in L.FIXED:                              # a hand-fixed part in a corridor is reported; the lane is laid and DRC judges
+                        print(f"lane {name} runs through the hand-fixed {ref}")
+                    else:
+                        self.lane_problems.append(f"lane {name} runs through {ref}")
         if self.lane_problems:
             raise SystemExit("the directives' lanes are not consistent:\n  " + "\n  ".join(self.lane_problems))
         self.match_lengths()
