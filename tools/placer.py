@@ -314,6 +314,11 @@ def bbox_mm(fp, courtyard=True):
     return (bb.GetLeft() / 1e6, bb.GetTop() / 1e6, bb.GetRight() / 1e6, bb.GetBottom() / 1e6)
 
 
+def sides_of(layer):
+    """The board side a lane leg keeps parts off: its own outer layer; an inner layer keeps neither."""
+    return {"F"} if layer == "F.Cu" else {"B"} if layer == "B.Cu" else set()
+
+
 def overlap(a, b, margin=0.0):
     return a[0] < b[2] + margin and a[2] > b[0] - margin and a[1] < b[3] + margin and a[3] > b[1] - margin
 
@@ -435,7 +440,7 @@ class Placer:
         self.host_of = {}                                 # ref -> its host
         self.side = {}
         self.under = {}                                   # a top part -> the boxes it denies the bottom (THT pads, EP via field, a crystal)
-        self.lanes = []                                   # (name, box) corridors kept free of parts on both sides
+        self.lanes = []                                   # (name, box, sides) corridors kept free of parts on the leg's own side(s)
         self.tracks = []                                  # (net, layer, width, p0, p1) the lanes' copper
         self.vias = []                                    # (net, x, y, diameter, drill) the lanes' vias
         self.lane_report = []                             # one line per lane: lengths, mismatch, crossings
@@ -578,7 +583,7 @@ class Placer:
             return "edge zone"
         if any(overlap(b, c) for c in self.corners):
             return "corner keep-out"
-        if any(overlap(b, c) for _, c in self.lanes):
+        if any(overlap(b, c) for _, c, sides in self.lanes if layer in sides):
             return "a lane"
         mine = self.psu_part(ref)
         for region in self.regions:
@@ -709,10 +714,10 @@ class Placer:
                     ends.update(r for r, _ in item[1].values())
                 elif isinstance(item[0], str) and item[0] not in ("x", "y", "layer") and item[0] in self.fps:
                     ends.add(item[0])
-        for name, box in self.lanes:                                # nothing fixed but this lane's own ends may stand in it
+        for name, box, sides in self.lanes:                         # nothing fixed but this lane's own ends may stand in it
             ends = lane_ends.get(name) or lane_ends.get(name[:-5] if name.endswith("_bump") else name, set())
             for ref in self.fixed:                                  # on either side: a corridor keeps parts out of both
-                if ref not in L.HOLES and ref not in ends and overlap(box, self.boxes[self.side[ref]][ref]):
+                if ref not in L.HOLES and ref not in ends and self.side[ref] in sides and overlap(box, self.boxes[self.side[ref]][ref]):
                     note = f"lane {name} runs through the hand-fixed {ref}" if ref in L.FIXED else f"lane {name} runs through {ref}"
                     seen = self.hand_notes if ref in L.FIXED else through   # once per lane and part, however many legs cross it
                     if note not in seen:                            # a hand-fixed part in a corridor is reported; the lane is laid and DRC judges
@@ -743,7 +748,7 @@ class Placer:
                 short, sign = (netN, -sP) if delta > 0 else (netP, sP)
                 cands = [(i, tr) for i, tr in mine if tr[0] == short and (abs(tr[3][0] - tr[4][0]) < 1e-6 or abs(tr[3][1] - tr[4][1]) < 1e-6)
                          and math.hypot(tr[4][0] - tr[3][0], tr[4][1] - tr[3][1]) > L.BUMP_WIDTH + 2.0]
-                others = [bx for nm, bx in self.lanes if not nm.startswith(name)] + [bx for r, bx in self.boxes["F"].items() if r in self.fixed]
+                others = [bx for nm, bx, _ in self.lanes if not nm.startswith(name)] + [bx for r, bx in self.boxes["F"].items() if r in self.fixed]
                 placed = False
                 for i, (net, lay, ww, a, b) in sorted(cands, key=lambda it: -math.hypot(it[1][4][0] - it[1][3][0], it[1][4][1] - it[1][3][1])):
                     d = unit(a, b); n = nplus(d); h = min(abs(delta) / 2, L.BUMP_HEIGHT); s = L.BUMP_WIDTH
@@ -754,7 +759,7 @@ class Placer:
                     if any(overlap(bb, o, 0.2) for o in others) or bb[0] < L.EDGE_ZONE or bb[1] < L.EDGE_ZONE or bb[2] > W - L.EDGE_ZONE or bb[3] > H - L.EDGE_ZONE:
                         continue
                     self.tracks[i:i + 1] = [(net, lay, ww, a, p1), (net, lay, ww, p1, q1), (net, lay, ww, q1, q2), (net, lay, ww, q2, p2), (net, lay, ww, p2, b)]
-                    self.lanes.append((name + "_bump", bb)); placed = True
+                    self.lanes.append((name + "_bump", bb, {lay[0]})); placed = True
                     for j, (nm, nP, nN, sg, a0, a1) in enumerate(self.pairs_laid):   # the indices after the bump shift by four
                         if a0 > i: self.pairs_laid[j] = (nm, nP, nN, sg, a0 + 4, a1 + 4)
                         elif a1 > i: self.pairs_laid[j] = (nm, nP, nN, sg, a0, a1 + 4)
@@ -810,7 +815,7 @@ class Placer:
             if x - r < z or y - r < z or x + r > W - z or y + r > H - z: return False
             box = (x - r, y - r, x + r, y + r)
             if any(overlap(box, c) for c in self.corners): return False
-            if any(overlap(box, c, 0.1) for _, c in self.lanes): return False
+            if any(overlap(box, c, 0.1) for _, c, _ in self.lanes): return False
             for a, b, cc, d in getattr(L, "COPPER_VOIDS", {}).values():
                 if overlap(box, (a, b, cc, d)): return False
             mine = self.psu_part(ref)
@@ -899,10 +904,17 @@ class Placer:
                 served += 1
         return placed, served, no_room, short
 
-    def corridor(self, name, a, b, hw):
+    def corridor(self, name, a, b, hw, layer="F.Cu"):
         """A leg's keep-out box, clipped where it enters the courtyard of a part the lane joins (handled by the caller)."""
         box = (min(a[0], b[0]) - hw, min(a[1], b[1]) - hw, max(a[0], b[0]) + hw, max(a[1], b[1]) + hw)
-        self.lanes.append((name, box))
+        self.lanes.append((name, box, sides_of(layer)))
+
+    def via_box(self, name, p, net, spread=0.0):
+        """The keep-out around a lane's via (or via pair spread across the lane): both sides, the via's own clearance and the margin."""
+        track, clear = self.class_of(net)
+        dia = self.via_geometry.get(self.classes.get(net, "Default"), self.via_geometry.get("Default", (0.6, 0.3)))[0]
+        r = spread + dia / 2 + clear + L.LANE_MARGIN
+        self.lanes.append((name + "_via", (p[0] - r, p[1] - r, p[0] + r, p[1] + r), {"F", "B"}))
 
     def walk(self, lane, ends_pads):
         """The centreline of a lane from its path items: points, the layer of each leg, and the end directions.
@@ -937,12 +949,13 @@ class Placer:
         for i, ((x0, y0), (x1, y1)) in enumerate(zip(pts, pts[1:])):
             for k, old, new in switches:
                 if k == i:
-                    layer = new; self.add_via(net, (x0, y0))
+                    layer = new; self.add_via(net, (x0, y0)); self.via_box(name, (x0, y0), net)
             self.tracks.append((net, layer, width, (x0, y0), (x1, y1)))
-            self.add_corridor(name, (x0, y0), (x1, y1), hw, ends)
+            self.add_corridor(name, (x0, y0), (x1, y1), hw, ends, layer)
         self.lane_report.append(f"{name}: {net.split('/')[-1]} {sum(math.hypot(b[0]-a[0], b[1]-a[1]) for a, b in zip(pts, pts[1:])):.1f} mm, {len(switches)} layer change(s)")
 
-    def add_corridor(self, name, a, b, hw, ends):
+    def add_corridor(self, name, a, b, hw, ends, layer="F.Cu"):
+        """A leg's keep-out on the leg's own side: a part on the other side does not break the pair's reference plane."""
         box = [min(a[0], b[0]) - hw, min(a[1], b[1]) - hw, max(a[0], b[0]) + hw, max(a[1], b[1]) + hw]
         horizontal = abs(a[1] - b[1]) < 1e-6
         for ref in ends:
@@ -963,7 +976,7 @@ class Placer:
                 else:
                     box[lo] = cb[hi]
         if box[2] - box[0] > 0.1 and box[3] - box[1] > 0.1:
-            self.lanes.append((name, tuple(box)))
+            self.lanes.append((name, tuple(box), sides_of(layer)))
 
     def add_via(self, net, p, size=None):
         """A via of the net's class (or of `size`, a (diameter, drill) pair: a rail via that fell back to a smaller one)."""
@@ -1113,8 +1126,9 @@ class Placer:
                 first = offp[0] if first is None else first; last = offp[-1]
             return first, last
         fP, lP = emit_member(sP, netP); fN, lN = emit_member(-sP, netN)
-        for vp in via_pts:                                             # the via pair at each layer change
+        for vp in via_pts:                                             # the via pair at each layer change, kept clear on both sides
             self.add_via(netP, vp[sP]); self.add_via(netN, vp[-sP])
+            self.via_box(name, ((vp[1][0] + vp[-1][0]) / 2, (vp[1][1] + vp[-1][1]) / 2), netP, VIA)
         offP = [fP, lP]; offN = [fN, lN]
         # escapes: pad tip to the first/last member points
         for side, net, offp in (("P", netP, offP), ("N", netN, offN)):
@@ -1125,8 +1139,8 @@ class Placer:
         self.bridge(name, bridges0, netP, netN, d0, layers[0]); self.bridge(name, bridges1, netP, netN, (-d1[0], -d1[1]), layers[-1])
         # corridors along the centreline legs
         ends = [r for spec in (spec0, spec1) for side in ("P", "N") for r, _ in spec[side]]
-        for a, b in zip(pts, pts[1:]):
-            self.add_corridor(name, a, b, hw, ends)
+        for i, (a, b) in enumerate(zip(pts, pts[1:])):
+            self.add_corridor(name, a, b, hw, ends, layers[i + 1])    # leg i runs on the layer in force after its first point
         self.lane_meta = getattr(self, "lane_meta", {}); self.lane_meta[name] = (len(switches), crossing)
         if crossing:
             self.lane_crossing.append(name)
@@ -1921,8 +1935,9 @@ def main(directives=None, out=None, project=None, house_fp=None):
         rule_area(region["name"], region["outline"], footprints=False, tracks=False, vias=False, fills=False)
     for name, (a, b, cc, d) in L.COPPER_VOIDS.items():        # no plane or pour on any layer (under a jack's magnetics): section 4; the pins' tracks pass
         rule_area(f"void_{name}", rect_outline(a, b, cc, d), footprints=False, tracks=False, vias=False, fills=True)
-    for i, (name, box) in enumerate(P.lanes):              # parts stay out of a lane on both sides; its copper goes through
-        rule_area(f"lane_{name}_{i}", rect_outline(*box), layers=("F.Cu", "B.Cu"), footprints=True, tracks=False, vias=False, fills=False)
+    for i, (name, box, sides) in enumerate(P.lanes):       # parts stay out of a lane on the leg's side (both at a via); its copper goes through
+        if sides:                                          # an inner-layer leg keeps no parts off
+            rule_area(f"lane_{name}_{i}", rect_outline(*box), layers=tuple(f"{s}.Cu" for s in sorted(sides)), footprints=True, tracks=False, vias=False, fills=False)
     # ---- planes from the directives (drawn as single outlines: a zone outline with a hole does not fill), and each
     # isolated region's own island
     def copper_zone(name, net, layer, outline, holes=()):

@@ -149,9 +149,14 @@ honoured exactly and the start is reproducible:
    silkscreen rule (section 6) on every regeneration.
 5. **Lanes are laid next**, from the pads they join through the legs the
    directives give, as wide as the class's track plus its clearance plus a
-   margin each side. Each becomes a footprint keep-out rule area on both
-   sides, stopping at the courtyards of the parts the lane joins, and the
-   lane's copper at the class width. A lane whose pad is not on its net is
+   margin each side. Each leg becomes a footprint keep-out rule area on
+   the leg's own side, stopping at the courtyards of the parts the lane
+   joins, and the lane's copper at the class width; a part on the other
+   side does not break the leg's reference plane (L2 under a top leg, L5
+   under a bottom one), and section 3.7's tuck puts small parts under pin
+   rows on the bottom, where a lane leaves those pins on top. Around each
+   lane via, and each pair's via pair, a box the via's clearance and the
+   margin wide keeps parts off both sides. A lane whose pad is not on its net is
    refused, and so is one that runs through a fixed part, unless parts are
    hand-fixed (item 4), when it is laid and reported. **A pair lane** lays the two
    member tracks at the class's differential width and gap along one
