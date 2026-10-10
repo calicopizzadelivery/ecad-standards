@@ -711,10 +711,10 @@ class Placer:
                         ends.add(item[0])
             for ref in self.fixed:                                  # on either side: a corridor keeps parts out of both
                 if ref not in L.HOLES and ref not in ends and overlap(box, self.boxes[self.side[ref]][ref]):
-                    if ref in L.FIXED:                              # a hand-fixed part in a corridor is reported; the lane is laid and DRC judges
-                        self.hand_notes.append(f"lane {name} runs through the hand-fixed {ref}"); print(self.hand_notes[-1])
-                    else:
-                        through.append(f"lane {name} runs through {ref}"); print(through[-1])
+                    note = f"lane {name} runs through the hand-fixed {ref}" if ref in L.FIXED else f"lane {name} runs through {ref}"
+                    seen = self.hand_notes if ref in L.FIXED else through   # once per lane and part, however many legs cross it
+                    if note not in seen:                            # a hand-fixed part in a corridor is reported; the lane is laid and DRC judges
+                        seen.append(note); print(note)
         crossing = [f"lane {n}: the P and N pads are on opposite sides at its two ends: swap the array's channels in the schematic, "
                     "or lead the path in from the other side" for n in self.lane_crossing]
         if (self.lane_problems or through or crossing) and not L.FIXED:   # with nothing hand-fixed the directives themselves are at fault
