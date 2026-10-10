@@ -644,8 +644,10 @@ class Placer:
             if not self.allowed(ref, self.boxes["F"][ref]):
                 b = self.boxes["F"][ref]; why = self.why_not(ref, b, 'F')
                 (hand if any(w in L.FIXED for w in re.split(r"[ ,]+", why)) else problems).append(f"{ref} at ({b[0]:.1f}-{b[2]:.1f}, {b[1]:.1f}-{b[3]:.1f}) is refused by: {why}")
+        self.hand_notes = getattr(self, "hand_notes", [])            # what the hand-fixed parts put in each other's way: placement.txt
         if hand:
-            print(f"hand-fixed parts closer than the packing margin to a neighbour ({len(hand)}; the DRC gate judges the courtyards): " + ", ".join(hand))
+            self.hand_notes.append(f"hand-fixed parts closer than the packing margin to a neighbour ({len(hand)}; the DRC gate judges the courtyards): " + ", ".join(hand))
+            print(self.hand_notes[-1])
         for ref, b in self.boxes["F"].items():
             if ref not in L.HOLES and ref not in L.FIXED and any(overlap(b, c) for c in self.corners):
                 problems.append(f"{ref} stands in a corner keep-out")
@@ -696,7 +698,9 @@ class Placer:
                 else:
                     self.lay_single(name, lane)
             except SystemExit as e:                                 # a lane the engine cannot lay is reported and left to the router
-                self.lane_problems.append(str(e)); print(f"LANE NOT LAID {name}: {e}")
+                self.lane_problems.append(f"{name}: {e}"); print(f"LANE NOT LAID {name}: {e}")
+        through = []                                                # a corridor over a locked part that is not hand-fixed (a connector)
+        self.hand_notes = getattr(self, "hand_notes", [])
         for name, box in self.lanes:                                # nothing fixed but the lane's ends may stand in it
             ends = set()
             for lane in L.LANES.values():
@@ -708,13 +712,16 @@ class Placer:
             for ref in self.fixed:                                  # on either side: a corridor keeps parts out of both
                 if ref not in L.HOLES and ref not in ends and overlap(box, self.boxes[self.side[ref]][ref]):
                     if ref in L.FIXED:                              # a hand-fixed part in a corridor is reported; the lane is laid and DRC judges
-                        print(f"lane {name} runs through the hand-fixed {ref}")
+                        self.hand_notes.append(f"lane {name} runs through the hand-fixed {ref}"); print(self.hand_notes[-1])
                     else:
-                        self.lane_problems.append(f"lane {name} runs through {ref}")
-        if self.lane_problems and not L.FIXED:                      # with nothing hand-fixed the directives themselves are at fault
-            raise SystemExit("the directives' lanes are not consistent:\n  " + "\n  ".join(self.lane_problems))
-        elif self.lane_problems:
-            print(f"lanes not laid ({len(self.lane_problems)}): the router routes those pairs, and the pair sweep spares them")
+                        through.append(f"lane {name} runs through {ref}"); print(through[-1])
+        if (self.lane_problems or through) and not L.FIXED:         # with nothing hand-fixed the directives themselves are at fault
+            raise SystemExit("the directives' lanes are not consistent:\n  " + "\n  ".join(self.lane_problems + through))
+        if self.lane_problems:
+            self.hand_notes.append(f"lanes not laid ({len(self.lane_problems)}; the router routes those pairs, and the pair sweep spares them): "
+                                   + "; ".join(self.lane_problems)); print(self.hand_notes[-1])
+        if through:
+            self.hand_notes.append(f"lanes laid through a locked part ({len(through)}; the DRC gate judges them): " + "; ".join(through)); print(self.hand_notes[-1])
         self.match_lengths()
 
     def match_lengths(self):
@@ -2015,6 +2022,9 @@ def main(directives=None, out=None, project=None, house_fp=None):
                 + " ".join(rail_none) + "\n")
         f.write(f"pads served short of their class's count or via (placed for wanted; {len(rail_short)}; the hand pass adds the rest):\n  "
                 + "\n  ".join(rail_short) + "\n")
+        if getattr(P, "hand_notes", None):
+            f.write("\nhand placement (layout.md 2, item 4): what the hand-fixed parts and the lanes put in each other's way; the next hand pass's work\n  "
+                    + "\n  ".join(P.hand_notes) + "\n")
         f.write(f"\ncities (layout.md 3.1): the schematic's islands with two or more parts, connectors, holes and ESD aside: each one's extent on\n"
                 f"the board, and the members more than {L.ISLAND_SPREAD:g} mm from every other member (placed apart from their city)\n")
         apart = []
