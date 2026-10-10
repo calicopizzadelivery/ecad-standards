@@ -628,20 +628,24 @@ class Placer:
                 if ref in self.fps and not (table is L.ANCHORS and ref in L.FIXED):
                     x, y, rot = pose[:3]; self.pose(ref, x, y, rot, pose[3] if len(pose) > 3 else "F"); self.fixed.add(ref)
         self.locked = [self.boxes["F"][ref] for ref in L.CONNECTORS if ref in self.fps]
-        problems = []
+        # the directives' own parts must be consistent; what the owner fixed by hand is taken as it is, its closeness to its
+        # neighbours reported here and judged by the DRC gate (courtyards), not refused
+        problems, hand = [], []
         refs = sorted(self.fixed)
         for i, a in enumerate(refs):
             for b in refs[i + 1:]:
                 if self.side[a] == self.side[b] and overlap(self.boxes[self.side[a]][a], self.boxes[self.side[b]][b], L.PACK_MARGIN):
-                    problems.append(f"{a} and {b} overlap")
+                    (hand if (a in L.FIXED or b in L.FIXED) else problems).append(f"{a} and {b}")
         for ref in L.ANCHORS:
             if ref not in self.fps:
                 problems.append(f"{ref} is anchored but not in the schematic"); continue
             if ref in L.FIXED:
                 continue
             if not self.allowed(ref, self.boxes["F"][ref]):
-                b = self.boxes["F"][ref]
-                problems.append(f"{ref} at ({b[0]:.1f}-{b[2]:.1f}, {b[1]:.1f}-{b[3]:.1f}) is refused by: {self.why_not(ref, b, 'F')}")
+                b = self.boxes["F"][ref]; why = self.why_not(ref, b, 'F')
+                (hand if any(w in L.FIXED for w in re.split(r"[ ,]+", why)) else problems).append(f"{ref} at ({b[0]:.1f}-{b[2]:.1f}, {b[1]:.1f}-{b[3]:.1f}) is refused by: {why}")
+        if hand:
+            print(f"hand-fixed parts closer than the packing margin to a neighbour ({len(hand)}; the DRC gate judges the courtyards): " + ", ".join(hand))
         for ref, b in self.boxes["F"].items():
             if ref not in L.HOLES and ref not in L.FIXED and any(overlap(b, c) for c in self.corners):
                 problems.append(f"{ref} stands in a corner keep-out")
