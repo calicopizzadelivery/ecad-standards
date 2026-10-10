@@ -621,20 +621,24 @@ class Placer:
     def place_fixed(self):
         for ref, (x, y) in L.HOLES.items():
             self.pose(ref, x, y, 0); self.fixed.add(ref)
+        # a fixed part (x, y, rot[, side]) outranks its anchor: a hand placement harvested into FIXED wins over the directive
+        # that first put the part somewhere, and a part fixed on the bottom goes there
         for table in (L.CONNECTORS, L.FIXED, L.ANCHORS):
-            for ref, (x, y, rot) in table.items():
-                if ref in self.fps:
-                    self.pose(ref, x, y, rot); self.fixed.add(ref)
+            for ref, pose in table.items():
+                if ref in self.fps and not (table is L.ANCHORS and ref in L.FIXED):
+                    x, y, rot = pose[:3]; self.pose(ref, x, y, rot, pose[3] if len(pose) > 3 else "F"); self.fixed.add(ref)
         self.locked = [self.boxes["F"][ref] for ref in L.CONNECTORS if ref in self.fps]
         problems = []
         refs = sorted(self.fixed)
         for i, a in enumerate(refs):
             for b in refs[i + 1:]:
-                if overlap(self.boxes["F"][a], self.boxes["F"][b], L.PACK_MARGIN):
+                if self.side[a] == self.side[b] and overlap(self.boxes[self.side[a]][a], self.boxes[self.side[b]][b], L.PACK_MARGIN):
                     problems.append(f"{a} and {b} overlap")
         for ref in L.ANCHORS:
             if ref not in self.fps:
                 problems.append(f"{ref} is anchored but not in the schematic"); continue
+            if ref in L.FIXED:
+                continue
             if not self.allowed(ref, self.boxes["F"][ref]):
                 b = self.boxes["F"][ref]
                 problems.append(f"{ref} at ({b[0]:.1f}-{b[2]:.1f}, {b[1]:.1f}-{b[3]:.1f}) is refused by: {self.why_not(ref, b, 'F')}")

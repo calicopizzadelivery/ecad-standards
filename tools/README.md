@@ -30,7 +30,7 @@ The directives module is the contract. Required:
 | `BOARD`, `RADIUS` | outline size (mm) and corner radius |
 | `HOLES`, `HOLE_KEEPOUT` | mounting holes `{ref: (x, y)}` and the corner square kept empty around each |
 | `CONNECTORS` | `{ref: (x, y, rot)}`, locked |
-| `ANCHORS`, `FIXED` | `{ref: (x, y, rot)}` ICs placed by flow (validated), parts fixed by hand (not validated, for parts that straddle a barrier) |
+| `ANCHORS`, `FIXED` | `{ref: (x, y, rot[, side])}` parts fixed by hand (not validated: parts that straddle a barrier, or a hand placement harvested from the saved board); a fixed part outranks its anchor and may sit on the bottom (`"B"`) |
 | `SPARE` | `(x, y)` where a part that fits nowhere is parked and reported |
 | `STACKUP` | layers for the board file, outer to outer: `("F.Cu", "copper", 0.035)` and `("dielectric 1", "prepreg", 0.3048, 4.6)`; its copper items set the board's copper layer count, the board's thickness and the rule areas' layers; the layers `PLANES` names are typed power in the board file |
 
