@@ -6,10 +6,13 @@ take this repository as a git submodule (the baseboard: `hardware/kicad/standard
 and call the tools from a thin wrapper of their own.
 
 They run on the system `python3` with KiCad's `pcbnew` module (KiCad 9 or
-later). `tools/bootstrap.sh` makes `.venv` beside them, the same interpreter
-with `kicad-python` (KiCad's IPC API client) added, for `live.py`; use
-`.venv/bin/python` for every tool once it exists. Debian and Ubuntu ship
-`python3` without pip, so the script bootstraps pip from PyPA first.
+10: the SWIG module ends with 10, and the IPC API is its successor).
+`tools/bootstrap.sh` makes `.venv` at the repository root, the same
+interpreter with `kicad-python` (KiCad's IPC API client) added, for
+`live.py`; use `.venv/bin/python` for every tool once it exists. Debian and
+Ubuntu ship `python3` without pip, so the script bootstraps pip from PyPA
+first. A project that takes this repository as a submodule runs the script
+inside the submodule (its `.venv` is ignored there too).
 
 ## placer.py: the placement engine (layout.md sections 2, 3, 6, 9)
 
@@ -210,9 +213,12 @@ poses only: designators follow the silkscreen rule on every regeneration.
 
 lays the directives' lanes the way the placer does (corridors clipped at the
 ends' courtyards, on the leg's own side; via boxes on both; the escape
-depth; the P side at both ends; lane-vs-lane crossings on one layer) against
-the parts where the board has them, and prints each lane's legs and what
-stands in them, with the depth of the overlap. `--lanes` tries a file's
+depth, a finding only where the body would start past the first corner, and
+a note where a corner's chamfer is shortened; the P side at both ends;
+lane-vs-lane crossings on one layer) against the parts where the board has
+them, and prints each lane's legs and what stands in them, with the depth
+of the overlap, one line per leg where the generator's `placement.txt`
+notes a part once per lane. `--lanes` tries a file's
 `LANES` instead of the directives' own, for drawing a path before it goes
 into them; `--near` lists the parts whose courtyards touch a rectangle. The
 generator remains the authority (its escapes, bridges and bumps are not

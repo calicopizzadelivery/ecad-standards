@@ -10,9 +10,15 @@ depth at each end, the P side at both ends (a pair laid with its members crossin
 crossings on one layer. --lanes takes a Python file defining LANES to try instead of the directives' own; --near lists
 the parts whose courtyards touch a rectangle (mm), for drawing a path. The findings are the hand-placement report's
 before the generator runs; the generator remains the authority (its escapes, bridges and bumps are not modelled here)."""
-import sys, os, math, json, fnmatch, importlib.util, argparse
+import sys, os, re, math, json, fnmatch, importlib.util, argparse
 
 DEFAULTS = {"LANE_MARGIN": 0.25, "ESCAPE_LENGTH": 1.2, "THT_STUB": 1.0, "CHAMFER": 0.8, "VIA_PAIR_OFFSET": 0.45, "THT_MARGIN": 0.5, "EP_MARGIN": 0.6}
+try:                                                                  # the engine's own defaults when it sits beside this file
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from placer import DEFAULTS as _ENGINE
+    DEFAULTS.update({k: _ENGINE[k] for k in DEFAULTS if k in _ENGINE})
+except Exception:
+    pass
 
 
 def overlap(a, c, margin=0.0):
@@ -55,12 +61,17 @@ class Context:
             bb = cy.BBox() if cy.OutlineCount() else fp.GetBoundingBox(False, False)
             box = (bb.GetLeft() / 1e6, bb.GetTop() / 1e6, bb.GetRight() / 1e6, bb.GetBottom() / 1e6)
             self.boxes[r] = ("B" if fp.IsFlipped() else "F", box)
-            blocks = []
+            blocks = []                                                 # what a top part denies the bottom, as placer.pose builds it
+            ic = re.match(r"[A-Z]+", r).group(0) in ("U", "K")         # placer.kind(): an IC or a relay
             for p in fp.Pads():
                 self.nets[(r, p.GetNumber())] = p.GetNetname()
-                if not fp.IsFlipped() and p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH):
-                    x, y = p.GetPosition().x / 1e6, p.GetPosition().y / 1e6; sx, sy = p.GetSizeX() / 2e6, p.GetSizeY() / 2e6; m = self.c["THT_MARGIN"]
-                    blocks.append((x - sx - m, y - sy - m, x + sx + m, y + sy + m))
+                if fp.IsFlipped():
+                    continue
+                x, y = p.GetPosition().x / 1e6, p.GetPosition().y / 1e6; sx, sy = p.GetSizeX() / 2e6, p.GetSizeY() / 2e6
+                if p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH):
+                    m = self.c["THT_MARGIN"]; blocks.append((x - sx - m, y - sy - m, x + sx + m, y + sy + m))
+                elif sx >= 0.75 and sy >= 0.75 and ic:                      # an IC's exposed pad: its via field
+                    m = self.c["EP_MARGIN"]; blocks.append((x - sx - m, y - sy - m, x + sx + m, y + sy + m))
             if not fp.IsFlipped() and r.rstrip("0123456789").endswith("Y"):
                 blocks.append(box)
             if blocks:
@@ -245,10 +256,11 @@ def check(ctx, LANES):
             if direct:
                 notes.append(f"direct (too short for a body: {total:.1f} < {dep0 + dep1 + 1.0:.1f} mm)")
             else:
-                if leg0 < dep0 + c["CHAMFER"]:
-                    hit(name, "escape", "", 0.0, f"lane {name}: the first leg ({leg0:.2f} mm) is shorter than the escape ({dep0:.2f}) and the chamfer")
-                if leg1 < dep1 + c["CHAMFER"]:
-                    hit(name, "escape", "", 0.0, f"lane {name}: the last leg ({leg1:.2f} mm) is shorter than the escape ({dep1:.2f}) and the chamfer")
+                for which, leg, dep in (("first", leg0, dep0), ("last", leg1, dep1)):
+                    if leg < dep:                                       # the body would start past the leg's corner
+                        hit(name, "escape", "", 0.0, f"lane {name}: the {which} leg ({leg:.2f} mm) is shorter than the escape ({dep:.2f})")
+                    elif leg - dep < 2 * c["CHAMFER"]:
+                        notes.append(f"the {which} corner's chamfer is shortened to {(leg - dep) / 2:.2f} mm")
             if any(k <= 0 or k >= len(pts) - 1 for k, _, _ in switches):
                 hit(name, "path", "", 0.0, f"lane {name}: a layer change needs a leg on each side of it")
             lines.insert(len(lines) - sum(1 for f in findings if f["lane"] == name), f"{name}: {base} pair w{w:g}/g{gap:g} hw {hw:.2f}, {len(pts) - 1} legs, {total:.1f} mm, {len(switches)} layer change(s)" + ("; " + "; ".join(notes) if notes else ""))

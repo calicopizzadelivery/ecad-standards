@@ -12,7 +12,7 @@ pass is checked while it happens instead of after a save and a regeneration.
 Needs KiCad 9 or later with the API switched on (Preferences > Plugins > Enable KiCad API) and the board open in the PCB
 editor, and the kicad-python package (tools/bootstrap.sh makes a venv with it beside the system's pcbnew module).
 Reads only: the tool never writes the board; what it checks is written to a scratch copy."""
-import argparse, os, sys, tempfile
+import argparse, os, shutil, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -52,7 +52,21 @@ def board_path(board):
     return os.path.join(doc.project.path, doc.board_filename) if doc.project.path else doc.board_filename
 
 
-def scratch_board(board, poses):
+def stale(board, poses):
+    """The parts whose live pose differs from the saved file by less than a micrometre: the editor holds an older copy
+    (the file was regenerated after it loaded), and a live harvest would carry the old nanometres."""
+    import pcbnew
+    b = pcbnew.LoadBoard(board_path(board))
+    out = []
+    for fp in b.GetFootprints():
+        p = poses.get(fp.GetReference())
+        if p and (abs(p[0] * 1e6 - fp.GetPosition().x) > 0.5 or abs(p[1] * 1e6 - fp.GetPosition().y) > 0.5) \
+                and abs(p[0] * 1e6 - fp.GetPosition().x) < 1000 and abs(p[1] * 1e6 - fp.GetPosition().y) < 1000:
+            out.append(fp.GetReference())
+    return out
+
+
+def scratch_board(board, poses, folder):
     """A copy of the saved board with the live poses applied (pcbnew), for the checks and the harvest."""
     import pcbnew
     src = board_path(board)
@@ -65,12 +79,11 @@ def scratch_board(board, poses):
         if (side == "B") != fp.IsFlipped():
             fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
         fp.SetOrientationDegrees(rot); fp.SetPosition(pcbnew.VECTOR2I(int(round(x * 1e6)), int(round(y * 1e6))))
-    folder = tempfile.mkdtemp(prefix="live-")
     out = os.path.join(folder, os.path.basename(src))
     pcbnew.SaveBoard(out, b)
     for f in os.listdir(os.path.dirname(src)):                        # the net classes come from the project file beside the board
         if f.endswith(".kicad_pro"):
-            import shutil; shutil.copy(os.path.join(os.path.dirname(src), f), folder)
+            shutil.copy(os.path.join(os.path.dirname(src), f), folder)
     return out
 
 
@@ -85,16 +98,19 @@ def select(board, refs):
 def cmd_poses(a):
     k, board = connect()
     poses = live_poses(board)
+    sys.path.insert(0, HERE)
+    import handplace
     if a.check:
-        sys.path.insert(0, HERE)
-        import handplace
         saved = handplace.poses(board_path(board))
         moved = sorted((r for r in poses if r in saved and handplace.differs(poses[r], saved[r])), key=handplace.refkey)
         for r in moved:
             print(f"{r}: live {tuple(round(v, 3) if isinstance(v, float) else v for v in poses[r])} saved {tuple(round(v, 3) if isinstance(v, float) else v for v in saved[r])}")
         print(f"live board against the saved file: {len(moved)} moved, {len([r for r in poses if r not in saved])} not in the file, {len([r for r in saved if r not in poses])} not on the live board")
+        old = stale(board, poses)
+        if old:
+            print(f"the editor's copy is older than the file by under a micrometre in {len(old)} parts: reload the board in the editor before a live harvest")
         return 1 if moved else 0
-    for r in sorted(poses, key=lambda s: (s.rstrip("0123456789"), int(s.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ") or 0))):
+    for r in sorted(poses, key=handplace.refkey):
         x, y, rot, side = poses[r]
         print(f"{r:6s} {x:8.3f} {y:8.3f} {rot:7.1f} {side}")
     return 0
@@ -104,9 +120,9 @@ def cmd_check(a):
     k, board = connect()
     sys.path.insert(0, HERE)
     import lanecheck
-    scratch = scratch_board(board, live_poses(board))
-    ctx = lanecheck.Context(scratch, a.gen_dir)
-    findings, lines = lanecheck.check(ctx, ctx.L.LANES)
+    with tempfile.TemporaryDirectory(prefix="live-") as folder:
+        ctx = lanecheck.Context(scratch_board(board, live_poses(board), folder), a.gen_dir)
+        findings, lines = lanecheck.check(ctx, getattr(ctx.L, "LANES", {}))
     print("\n".join(lines))
     refs = sorted({f["ref"] for f in findings if f["ref"] and f["kind"] in ("through", "via", "under")})
     if a.select:
@@ -135,8 +151,14 @@ def cmd_harvest(a):
     k, board = connect()
     sys.path.insert(0, HERE)
     import handplace
-    scratch = scratch_board(board, live_poses(board))
-    return handplace.harvest(scratch, os.path.abspath(a.gen_dir))
+    poses = live_poses(board)
+    old = stale(board, poses)
+    if old:
+        print(f"the editor's copy is older than the file by under a micrometre in {len(old)} parts ({' '.join(old[:6])}{' ...' if len(old) > 6 else ''}): "
+              "reload the board in the editor (File > Revert) and harvest again")
+        return 1
+    with tempfile.TemporaryDirectory(prefix="live-") as folder:
+        return handplace.harvest(scratch_board(board, poses, folder), os.path.abspath(a.gen_dir))
 
 
 def main(argv=None):

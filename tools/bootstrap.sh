@@ -11,4 +11,7 @@ python3 -c "import pcbnew" 2>/dev/null || { echo "the system python3 has no pcbn
 .venv/bin/python -m pip --version >/dev/null 2>&1 || {
     tmp=$(mktemp); curl -sS https://bootstrap.pypa.io/get-pip.py -o "$tmp"; .venv/bin/python "$tmp" -q; rm -f "$tmp"; }
 .venv/bin/python -m pip install -q --upgrade kicad-python
-.venv/bin/python -c "import kipy, pcbnew, importlib.metadata as m; print('kicad-python', m.version('kicad-python'), '/ pcbnew', pcbnew.GetBuildVersion())" 2>&1 | grep -v "property.h\|Debug:"
+# the check's status must reach set -e, so it is captured rather than piped (dash has no pipefail)
+out=$(.venv/bin/python -c "import kipy, pcbnew, importlib.metadata as m; print('kicad-python', m.version('kicad-python'), '/ pcbnew', pcbnew.GetBuildVersion())" 2>&1) || {
+    printf '%s\n' "$out" | grep -v 'property.h\|Debug:'; echo "the venv cannot import kipy and pcbnew together"; exit 1; }
+printf '%s\n' "$out" | grep -v 'property.h\|Debug:'
