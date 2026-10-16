@@ -18,7 +18,9 @@ import io, contextlib
 import pcbnew
 import placer
 
-MM = pcbnew.VECTOR2I_MM
+def MM(x, y):
+    """Millimetres to the board's nanometres, rounded: KiCad's VECTOR2I_MM truncates, which put a part 1 nm off its directive."""
+    return pcbnew.VECTOR2I(int(round(x * 1e6)), int(round(y * 1e6)))
 
 
 def add_flood(board, name, net, layer, outline, netinfo):

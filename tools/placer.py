@@ -30,7 +30,9 @@ import importlib.util
 import pcbnew
 
 KICAD_FP = "/usr/share/kicad/footprints"
-MM = pcbnew.VECTOR2I_MM
+def MM(x, y):
+    """Millimetres to the board's nanometres, rounded: KiCad's VECTOR2I_MM truncates, which put a part 1 nm off its directive."""
+    return pcbnew.VECTOR2I(int(round(x * 1e6)), int(round(y * 1e6)))
 DEBUG_REF = os.environ.get("DEBUG_REF")
 SILK = {"F": pcbnew.F_SilkS, "B": pcbnew.B_SilkS}
 L = OUT = PROJECT = HOUSE_FP = W = H = None       # set by configure(): the project's directives and paths

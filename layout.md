@@ -729,7 +729,11 @@ directives before the next starts.
    KiCad, harvest the board into the directives (section 2, item 4),
    regenerate, and read `placement.txt` for the parts and lanes the move
    put in each other's way, until the lanes lay and the DRC gate is clean;
-   only then is the board routed.
+   only then is the board routed. The loop runs inside the editor too:
+   `tools/live.py check --select` reads the placement off the open board
+   through KiCad's IPC API, lays the lanes against it (`tools/lanecheck.py`)
+   and selects the parts that stand in one, so a move is judged while it
+   is made and the save, harvest and regeneration confirm it.
 6. **Silkscreen and fabrication**: section 6, then the stackup and
    controlled-impedance notes in the fab drawing.
 

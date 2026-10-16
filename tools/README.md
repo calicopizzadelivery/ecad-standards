@@ -5,6 +5,12 @@ follows the rules by running them rather than by rereading them. Projects
 take this repository as a git submodule (the baseboard: `hardware/kicad/standards`)
 and call the tools from a thin wrapper of their own.
 
+They run on the system `python3` with KiCad's `pcbnew` module (KiCad 9 or
+later). `tools/bootstrap.sh` makes `.venv` beside them, the same interpreter
+with `kicad-python` (KiCad's IPC API client) added, for `live.py`; use
+`.venv/bin/python` for every tool once it exists. Debian and Ubuntu ship
+`python3` without pip, so the script bootstraps pip from PyPA first.
+
 ## placer.py: the placement engine (layout.md sections 2, 3, 6, 9)
 
     tools/placer.py DIRECTIVES.py OUT_DIR PROJECT [HOUSE_FOOTPRINTS_DIR]
@@ -197,6 +203,40 @@ is the whole board's placement from then on (every part is fixed, so an
 engine change cannot move one silently); a part added in the schematic is
 placed by the engine until the next harvest. The harvest takes the parts'
 poses only: designators follow the silkscreen rule on every regeneration.
+
+## lanecheck.py: the lanes against a placement, in seconds (layout.md section 2, item 5)
+
+    tools/lanecheck.py BOARD.kicad_pcb DIRECTIVES_DIR [--lanes CANDIDATE.py] [--near X0 Y0 X1 Y1]
+
+lays the directives' lanes the way the placer does (corridors clipped at the
+ends' courtyards, on the leg's own side; via boxes on both; the escape
+depth; the P side at both ends; lane-vs-lane crossings on one layer) against
+the parts where the board has them, and prints each lane's legs and what
+stands in them, with the depth of the overlap. `--lanes` tries a file's
+`LANES` instead of the directives' own, for drawing a path before it goes
+into them; `--near` lists the parts whose courtyards touch a rectangle. The
+generator remains the authority (its escapes, bridges and bumps are not
+modelled here); this answers "does this path lay" without a four-minute
+generation. Exit 1 when it finds anything.
+
+## live.py: the engine in the open PCB editor (layout.md section 8, step 5)
+
+    tools/live.py poses [--check]
+    tools/live.py check DIRECTIVES_DIR [--select]
+    tools/live.py select REF [REF ...]   |   tools/live.py clear
+    tools/live.py harvest DIRECTIVES_DIR
+
+talks to the running PCB editor over KiCad's IPC API (switch it on under
+Preferences > Plugins > "Enable KiCad API", restart KiCad, open the board).
+`poses` prints the live placement, or with `--check` the parts that differ
+from the saved file; `check` runs `lanecheck.py` over the live placement
+(applied to a scratch copy of the saved board) and with `--select` selects
+the parts it names in the editor, so the owner sees what to move while
+moving it; `select` and `clear` drive the editor's selection; `harvest`
+runs `handplace.py` over the live placement without a save. The tool never
+writes the board: moves and the corridor overlay are the next step, once
+the read-only loop has earned trust. KiCad 10's API answers the same
+nanometres the file holds (checked on the baseboard: 271 of 271 poses).
 
 ## harvest.py: measured practice (layout.md section 9)
 
